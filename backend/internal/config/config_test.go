@@ -424,6 +424,40 @@ func TestValidateAbsoluteHTTPURL(t *testing.T) {
 	}
 }
 
+func TestValidateServerFrontendURL(t *testing.T) {
+	viper.Reset()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	cfg.Server.FrontendURL = "https://example.com"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() frontend_url valid error: %v", err)
+	}
+
+	cfg.Server.FrontendURL = "https://example.com/path"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() frontend_url with path valid error: %v", err)
+	}
+
+	cfg.Server.FrontendURL = "https://example.com?utm=1"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() should reject server.frontend_url with query")
+	}
+
+	cfg.Server.FrontendURL = "https://user:pass@example.com"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() should reject server.frontend_url with userinfo")
+	}
+
+	cfg.Server.FrontendURL = "/relative"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() should reject relative server.frontend_url")
+	}
+}
+
 func TestValidateFrontendRedirectURL(t *testing.T) {
 	if err := ValidateFrontendRedirectURL("/auth/callback"); err != nil {
 		t.Fatalf("ValidateFrontendRedirectURL relative error: %v", err)

@@ -935,6 +935,22 @@ func setDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if strings.TrimSpace(c.Server.FrontendURL) != "" {
+		if err := ValidateAbsoluteHTTPURL(c.Server.FrontendURL); err != nil {
+			return fmt.Errorf("server.frontend_url invalid: %w", err)
+		}
+		u, err := url.Parse(strings.TrimSpace(c.Server.FrontendURL))
+		if err != nil {
+			return fmt.Errorf("server.frontend_url invalid: %w", err)
+		}
+		if u.RawQuery != "" || u.ForceQuery {
+			return fmt.Errorf("server.frontend_url invalid: must not include query")
+		}
+		if u.User != nil {
+			return fmt.Errorf("server.frontend_url invalid: must not include userinfo")
+		}
+		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
+	}
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")
 	}
