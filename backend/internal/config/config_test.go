@@ -451,7 +451,6 @@ func TestValidateServerFrontendURL(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("Validate() should reject server.frontend_url with userinfo")
 	}
-
 	cfg.Server.FrontendURL = "/relative"
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("Validate() should reject relative server.frontend_url")
