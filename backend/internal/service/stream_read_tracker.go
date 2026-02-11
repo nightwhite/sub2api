@@ -21,4 +21,3 @@ func (t upstreamReadTracker) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-
