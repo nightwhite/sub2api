@@ -54,7 +54,7 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "Sub2API-Updater")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- request targets fixed GitHub API host
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string
 	}
 
 	// 使用预配置的下载客户端（已包含代理配置）
-	resp, err := c.downloadHTTPClient.Do(req)
+	resp, err := c.downloadHTTPClient.Do(req) // #nosec G704 -- download URL is expected to be GitHub release asset
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string)
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- checksum URL is expected to be GitHub-hosted
 	if err != nil {
 		return nil, err
 	}

@@ -86,7 +86,7 @@ func (s *claudeUsageService) FetchUsageWithOptions(ctx context.Context, opts *se
 			client = &http.Client{Timeout: 30 * time.Second}
 		}
 
-		resp, err = client.Do(req)
+		resp, err = client.Do(req) // #nosec G704 -- request targets fixed Anthropic host
 		if err != nil {
 			return nil, fmt.Errorf("request failed: %w", err)
 		}

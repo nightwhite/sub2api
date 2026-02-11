@@ -1049,7 +1049,7 @@ func fetchProjectIDFromResourceManager(ctx context.Context, accessToken, proxyUR
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- request targets fixed Google API host
 	if err != nil {
 		return "", fmt.Errorf("resource manager request failed: %w", err)
 	}

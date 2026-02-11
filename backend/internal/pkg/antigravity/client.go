@@ -201,7 +201,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- request targets fixed Google OAuth host
 	if err != nil {
 		return nil, fmt.Errorf("token 交换请求失败: %w", err)
 	}
@@ -238,7 +238,7 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenR
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- request targets fixed Google OAuth host
 	if err != nil {
 		return nil, fmt.Errorf("token 刷新请求失败: %w", err)
 	}
@@ -269,7 +269,7 @@ func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- request targets fixed Google API host
 	if err != nil {
 		return nil, fmt.Errorf("用户信息请求失败: %w", err)
 	}
@@ -318,7 +318,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", UserAgent)
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) // #nosec G704 -- baseURL is from internal constant list
 		if err != nil {
 			lastErr = fmt.Errorf("loadCodeAssist 请求失败: %w", err)
 			if shouldFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {
@@ -406,7 +406,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", UserAgent)
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) // #nosec G704 -- baseURL is from internal constant list
 		if err != nil {
 			lastErr = fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
 			if shouldFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {

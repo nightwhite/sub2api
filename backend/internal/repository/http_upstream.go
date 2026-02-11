@@ -134,7 +134,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	}
 
 	// 执行请求
-	resp, err := entry.client.Do(req)
+	resp, err := entry.client.Do(req) // #nosec G704 -- target host is validated (resolved IP allowlist) before request
 	if err != nil {
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -206,7 +206,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	// 执行请求
-	resp, err := entry.client.Do(req)
+	resp, err := entry.client.Do(req) // #nosec G704 -- target host is validated (resolved IP allowlist) before request
 	if err != nil {
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)

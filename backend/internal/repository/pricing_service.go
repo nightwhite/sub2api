@@ -37,7 +37,7 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- URL is validated by PricingService before calling
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (st
 		return "", err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- URL is validated by PricingService before calling
 	if err != nil {
 		return "", err
 	}

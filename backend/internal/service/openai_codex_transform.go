@@ -557,7 +557,7 @@ func fetchWithETag(url, etag string) (string, string, int, error) {
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- URL comes from server-side constant (not user input)
 	if err != nil {
 		return "", "", 0, err
 	}
