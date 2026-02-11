@@ -180,12 +180,13 @@ func ProvideOpsAlertEvaluatorService(
 
 // ProvideOpsCleanupService creates and starts OpsCleanupService (cron scheduled).
 func ProvideOpsCleanupService(
+	opsService *OpsService,
 	opsRepo OpsRepository,
 	db *sql.DB,
 	redisClient *redis.Client,
 	cfg *config.Config,
 ) *OpsCleanupService {
-	svc := NewOpsCleanupService(opsRepo, db, redisClient, cfg)
+	svc := NewOpsCleanupService(opsService, opsRepo, db, redisClient, cfg)
 	svc.Start()
 	return svc
 }

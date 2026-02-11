@@ -38,6 +38,7 @@ return 0
 // - Safety: deletes in batches to avoid long transactions.
 type OpsCleanupService struct {
 	opsRepo     OpsRepository
+	opsService  *OpsService
 	db          *sql.DB
 	redisClient *redis.Client
 	cfg         *config.Config
@@ -53,6 +54,7 @@ type OpsCleanupService struct {
 }
 
 func NewOpsCleanupService(
+	opsService *OpsService,
 	opsRepo OpsRepository,
 	db *sql.DB,
 	redisClient *redis.Client,
@@ -60,6 +62,7 @@ func NewOpsCleanupService(
 ) *OpsCleanupService {
 	return &OpsCleanupService{
 		opsRepo:     opsRepo,
+		opsService:  opsService,
 		db:          db,
 		redisClient: redisClient,
 		cfg:         cfg,
@@ -184,9 +187,27 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 
 	now := time.Now().UTC()
 
+	errorLogRetentionDays := s.cfg.Ops.Cleanup.ErrorLogRetentionDays
+	minuteMetricsRetentionDays := s.cfg.Ops.Cleanup.MinuteMetricsRetentionDays
+	hourlyMetricsRetentionDays := s.cfg.Ops.Cleanup.HourlyMetricsRetentionDays
+
+	// Allow runtime override via DB-backed Ops advanced settings.
+	// This is useful for debugging-heavy environments where operators want to adjust
+	// retention without redeploying.
+	if s.opsService != nil {
+		if settings, err := s.opsService.GetOpsAdvancedSettings(ctx); err == nil && settings != nil {
+			if !settings.DataRetention.CleanupEnabled {
+				return out, nil
+			}
+			errorLogRetentionDays = settings.DataRetention.ErrorLogRetentionDays
+			minuteMetricsRetentionDays = settings.DataRetention.MinuteMetricsRetentionDays
+			hourlyMetricsRetentionDays = settings.DataRetention.HourlyMetricsRetentionDays
+		}
+	}
+
 	// Error-like tables: error logs / retry attempts / alert events.
-	if days := s.cfg.Ops.Cleanup.ErrorLogRetentionDays; days > 0 {
-		cutoff := now.AddDate(0, 0, -days)
+	if errorLogRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -errorLogRetentionDays)
 		n, err := deleteOldRowsByID(ctx, s.db, "ops_error_logs", "created_at", cutoff, batchSize, false)
 		if err != nil {
 			return out, err
@@ -207,8 +228,8 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 	}
 
 	// Minute-level metrics snapshots.
-	if days := s.cfg.Ops.Cleanup.MinuteMetricsRetentionDays; days > 0 {
-		cutoff := now.AddDate(0, 0, -days)
+	if minuteMetricsRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -minuteMetricsRetentionDays)
 		n, err := deleteOldRowsByID(ctx, s.db, "ops_system_metrics", "created_at", cutoff, batchSize, false)
 		if err != nil {
 			return out, err
@@ -217,8 +238,8 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 	}
 
 	// Pre-aggregation tables (hourly/daily).
-	if days := s.cfg.Ops.Cleanup.HourlyMetricsRetentionDays; days > 0 {
-		cutoff := now.AddDate(0, 0, -days)
+	if hourlyMetricsRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -hourlyMetricsRetentionDays)
 		n, err := deleteOldRowsByID(ctx, s.db, "ops_metrics_hourly", "bucket_start", cutoff, batchSize, false)
 		if err != nil {
 			return out, err

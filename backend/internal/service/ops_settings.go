@@ -359,9 +359,9 @@ func (s *OpsService) UpdateOpsAlertRuntimeSettings(ctx context.Context, cfg *Ops
 func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 	return &OpsAdvancedSettings{
 		DataRetention: OpsDataRetentionSettings{
-			CleanupEnabled:             false,
+			CleanupEnabled:             true,
 			CleanupSchedule:            "0 2 * * *",
-			ErrorLogRetentionDays:      30,
+			ErrorLogRetentionDays:      7,
 			MinuteMetricsRetentionDays: 30,
 			HourlyMetricsRetentionDays: 30,
 		},
@@ -385,7 +385,7 @@ func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
 		cfg.DataRetention.CleanupSchedule = "0 2 * * *"
 	}
 	if cfg.DataRetention.ErrorLogRetentionDays <= 0 {
-		cfg.DataRetention.ErrorLogRetentionDays = 30
+		cfg.DataRetention.ErrorLogRetentionDays = 7
 	}
 	if cfg.DataRetention.MinuteMetricsRetentionDays <= 0 {
 		cfg.DataRetention.MinuteMetricsRetentionDays = 30
