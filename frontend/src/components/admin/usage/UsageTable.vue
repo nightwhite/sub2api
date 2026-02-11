@@ -116,6 +116,28 @@
           <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDuration(row.duration_ms) }}</span>
         </template>
 
+        <template #cell-request_id="{ row }">
+          <div class="flex items-center gap-2">
+            <span
+              v-if="row.request_id"
+              class="block max-w-[180px] truncate font-mono text-xs text-gray-600 dark:text-gray-400"
+              :title="row.request_id"
+            >
+              {{ row.request_id }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+            <button
+              v-if="row.request_id"
+              type="button"
+              class="inline-flex items-center rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-700 dark:hover:text-gray-200"
+              title="Ops"
+              @click.stop="openOpsByRequestId(row.request_id)"
+            >
+              <Icon name="search" size="sm" :stroke-width="2" />
+            </button>
+          </div>
+        </template>
+
         <template #cell-created_at="{ value }">
           <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
         </template>
@@ -241,6 +263,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -249,6 +272,7 @@ import type { AdminUsageLog } from '@/types'
 
 defineProps(['data', 'loading'])
 const { t } = useI18n()
+const router = useRouter()
 
 // Tooltip state - cost
 const tooltipVisible = ref(false)
@@ -272,6 +296,7 @@ const cols = computed(() => [
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'first_token', label: t('usage.firstToken'), sortable: false },
   { key: 'duration', label: t('usage.duration'), sortable: false },
+  { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
@@ -330,5 +355,19 @@ const showTokenTooltip = (event: MouseEvent, row: AdminUsageLog) => {
 const hideTokenTooltip = () => {
   tokenTooltipVisible.value = false
   tokenTooltipData.value = null
+}
+
+function openOpsByRequestId(requestId: string) {
+  const rid = String(requestId || '').trim()
+  if (!rid) return
+  router.push({
+    path: '/admin/ops',
+    query: {
+      tr: '30d',
+      open_error_details: '1',
+      error_type: 'request',
+      err_q: rid
+    }
+  })
 }
 </script>

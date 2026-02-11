@@ -67,7 +67,9 @@ const TOOLBAR_RANGE_MINUTES: Record<string, number> = {
   '30m': 30,
   '1h': 60,
   '6h': 6 * 60,
-  '24h': 24 * 60
+  '24h': 24 * 60,
+  '7d': 7 * 24 * 60,
+  '30d': 30 * 24 * 60
 }
 
 const availableRealtimeWindows = computed(() => {
@@ -120,6 +122,8 @@ const timeRangeOptions = computed(() => [
   { value: '1h', label: t('admin.ops.timeRange.1h') },
   { value: '6h', label: t('admin.ops.timeRange.6h') },
   { value: '24h', label: t('admin.ops.timeRange.24h') },
+  { value: '7d', label: t('admin.ops.timeRange.7d') },
+  { value: '30d', label: t('admin.ops.timeRange.30d') },
   {
     value: 'custom',
     label: props.timeRange === 'custom' && props.customStartTime && props.customEndTime

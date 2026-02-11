@@ -11,6 +11,7 @@ interface Props {
   timeRange: string
   platform?: string
   groupId?: number | null
+  initialQuery?: string
   errorType: 'request' | 'upstream'
 }
 
@@ -126,7 +127,7 @@ async function fetchErrorLogs() {
 }
 
   function resetFilters() {
-    q.value = ''
+    q.value = String(props.initialQuery || '').trim()
     statusCode.value = null
     phase.value = props.errorType === 'upstream' ? 'upstream' : ''
     errorOwner.value = ''
@@ -143,6 +144,15 @@ watch(
     page.value = 1
     pageSize.value = 10
     resetFilters()
+  }
+)
+
+watch(
+  () => props.initialQuery,
+  () => {
+    if (!props.show) return
+    // Keep the modal search in sync with deep links (best-effort).
+    q.value = String(props.initialQuery || '').trim()
   }
 )
 

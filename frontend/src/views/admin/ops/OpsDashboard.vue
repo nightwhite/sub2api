@@ -100,6 +100,7 @@
           :time-range="timeRange"
           :platform="platform"
           :group-id="groupId"
+          :initial-query="errorDetailsQuery"
           :error-type="errorDetailsType"
           @update:show="showErrorDetails = $event"
           @openErrorDetail="openError"
@@ -160,8 +161,8 @@ const { t } = useI18n()
 
 const opsEnabled = computed(() => adminSettingsStore.opsMonitoringEnabled)
 
-type TimeRange = '5m' | '30m' | '1h' | '6h' | '24h' | 'custom'
-const allowedTimeRanges = new Set<TimeRange>(['5m', '30m', '1h', '6h', '24h', 'custom'])
+type TimeRange = '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d' | 'custom'
+const allowedTimeRanges = new Set<TimeRange>(['5m', '30m', '1h', '6h', '24h', '7d', '30d', 'custom'])
 
 type QueryMode = 'auto' | 'raw' | 'preagg'
 const allowedQueryModes = new Set<QueryMode>(['auto', 'raw', 'preagg'])
@@ -191,6 +192,7 @@ const QUERY_KEYS = {
   // Deep links
   openErrorDetails: 'open_error_details',
   errorType: 'error_type',
+  errorQuery: 'err_q',
   alertRuleId: 'alert_rule_id',
   openAlertRules: 'open_alert_rules'
 } as const
@@ -288,6 +290,7 @@ const applyRouteQueryToState = () => {
   if (openErr === '1' || openErr === 'true') {
     const typ = readQueryString(QUERY_KEYS.errorType)
     errorDetailsType.value = typ === 'upstream' ? 'upstream' : 'request'
+    errorDetailsQuery.value = readQueryString(QUERY_KEYS.errorQuery) || ''
     showErrorDetails.value = true
   }
 }
@@ -351,6 +354,7 @@ const showErrorModal = ref(false)
 
 const showErrorDetails = ref(false)
 const errorDetailsType = ref<'request' | 'upstream'>('request')
+const errorDetailsQuery = ref('')
 
 const showRequestDetails = ref(false)
 const requestDetailsPreset = ref<OpsRequestDetailsPreset>({
@@ -429,6 +433,7 @@ function handleOpenRequestDetails(preset?: OpsRequestDetailsPreset) {
 
 function openErrorDetails(kind: 'request' | 'upstream') {
   errorDetailsType.value = kind
+  errorDetailsQuery.value = ''
   // Ensure only one modal visible at a time.
   showRequestDetails.value = false
   showErrorModal.value = false

@@ -42,7 +42,7 @@ export function sumNumbers(values: Array<number | null | undefined>): number {
 
 /**
  * 解析 time_range 为分钟数。
- * 支持：`5m/30m/1h/6h/24h`
+ * 支持：`5m/30m/1h/6h/24h/7d/30d`
  */
 export function parseTimeRangeMinutes(range: string): number {
   const trimmed = (range || '').trim()
@@ -54,6 +54,10 @@ export function parseTimeRangeMinutes(range: string): number {
   if (trimmed.endsWith('h')) {
     const v = Number.parseInt(trimmed.slice(0, -1), 10)
     return Number.isFinite(v) && v > 0 ? v * 60 : 60
+  }
+  if (trimmed.endsWith('d')) {
+    const v = Number.parseInt(trimmed.slice(0, -1), 10)
+    return Number.isFinite(v) && v > 0 ? v * 24 * 60 : 60
   }
   return 60
 }

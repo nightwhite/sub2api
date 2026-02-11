@@ -4226,6 +4226,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			return
 		}
 		clientWriteErr = writeErr
+		elapsedMs := time.Since(startTime).Milliseconds()
 		slog.Warn("stream_client_disconnect",
 			"platform", account.Platform,
 			"request_path", requestPath,
@@ -4236,7 +4237,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			"account_type", account.Type,
 			"model", originalModel,
 			"mapped_model", mappedModel,
-			"elapsed_ms", time.Since(startTime).Milliseconds(),
+			"elapsed_ms", elapsedMs,
 			"downstream_bytes", downstreamBytes,
 			"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
 			"upstream_lines", atomic.LoadInt64(&upstreamLines),
@@ -4244,6 +4245,31 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			"cf_ray", cfRay,
 			"error", writeErr,
 		)
+
+		if elapsedMs >= 60_000 {
+			detail := map[string]any{
+				"kind":                    "client_disconnect",
+				"error":                   writeErr.Error(),
+				"elapsed_ms":              elapsedMs,
+				"first_token_ms":          firstTokenMs,
+				"downstream_bytes":        downstreamBytes,
+				"upstream_bytes":          atomic.LoadInt64(&upstreamBytes),
+				"upstream_lines":          atomic.LoadInt64(&upstreamLines),
+				"stream_interval_seconds": int(streamInterval.Seconds()),
+				"cf_ray":                  cfRay,
+			}
+			if b, err := json.Marshal(detail); err == nil {
+				SetOpsStreamFault(c, OpsStreamFault{
+					Phase:      "request",
+					Type:       "client_disconnect",
+					StatusCode: 499,
+					Message:    "Client disconnected during streaming",
+					Detail:     string(b),
+					Owner:      "client",
+					Source:     "client_request",
+				})
+			}
+		}
 	}
 
 	pendingEventLines := make([]string, 0, 4)
@@ -4350,6 +4376,30 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if ev.err != nil {
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
+					elapsedMs := time.Since(startTime).Milliseconds()
+					if elapsedMs >= 60_000 {
+						detail := map[string]any{
+							"kind":             "context_canceled",
+							"error":            ev.err.Error(),
+							"elapsed_ms":       elapsedMs,
+							"first_token_ms":   firstTokenMs,
+							"downstream_bytes": downstreamBytes,
+							"upstream_bytes":   atomic.LoadInt64(&upstreamBytes),
+							"upstream_lines":   atomic.LoadInt64(&upstreamLines),
+							"cf_ray":           cfRay,
+						}
+						if b, err := json.Marshal(detail); err == nil {
+							SetOpsStreamFault(c, OpsStreamFault{
+								Phase:      "request",
+								Type:       "context_canceled",
+								StatusCode: 499,
+								Message:    "Request context canceled during streaming",
+								Detail:     string(b),
+								Owner:      "client",
+								Source:     "client_request",
+							})
+						}
+					}
 					log.Printf("Context canceled during streaming, returning collected usage")
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 				}
@@ -4361,8 +4411,51 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					log.Printf("SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
+					detail := map[string]any{
+						"kind":             "response_too_large",
+						"error":            ev.err.Error(),
+						"elapsed_ms":       time.Since(startTime).Milliseconds(),
+						"first_token_ms":   firstTokenMs,
+						"max_line_size":    maxLineSize,
+						"downstream_bytes": downstreamBytes,
+						"upstream_bytes":   atomic.LoadInt64(&upstreamBytes),
+						"upstream_lines":   atomic.LoadInt64(&upstreamLines),
+						"cf_ray":           cfRay,
+					}
+					if b, err := json.Marshal(detail); err == nil {
+						SetOpsStreamFault(c, OpsStreamFault{
+							Phase:      "upstream",
+							Type:       "response_too_large",
+							StatusCode: 502,
+							Message:    "Upstream SSE line too large",
+							Detail:     string(b),
+							Owner:      "provider",
+							Source:     "upstream_http",
+						})
+					}
 					sendErrorEvent("response_too_large")
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+				}
+				detail := map[string]any{
+					"kind":             "stream_read_error",
+					"error":            ev.err.Error(),
+					"elapsed_ms":       time.Since(startTime).Milliseconds(),
+					"first_token_ms":   firstTokenMs,
+					"downstream_bytes": downstreamBytes,
+					"upstream_bytes":   atomic.LoadInt64(&upstreamBytes),
+					"upstream_lines":   atomic.LoadInt64(&upstreamLines),
+					"cf_ray":           cfRay,
+				}
+				if b, err := json.Marshal(detail); err == nil {
+					SetOpsStreamFault(c, OpsStreamFault{
+						Phase:      "upstream",
+						Type:       "stream_read_error",
+						StatusCode: 502,
+						Message:    "Upstream stream read error",
+						Detail:     string(b),
+						Owner:      "provider",
+						Source:     "upstream_http",
+					})
 				}
 				sendErrorEvent("stream_read_error")
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
@@ -4453,6 +4546,28 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				"upstream_lines", atomic.LoadInt64(&upstreamLines),
 				"cf_ray", cfRay,
 			)
+			detail := map[string]any{
+				"kind":                      "stream_timeout",
+				"elapsed_ms":                time.Since(startTime).Milliseconds(),
+				"first_token_ms":            firstTokenMs,
+				"last_upstream_read_age_ms": time.Since(lastRead).Milliseconds(),
+				"stream_interval_seconds":   int(streamInterval.Seconds()),
+				"downstream_bytes":          downstreamBytes,
+				"upstream_bytes":            atomic.LoadInt64(&upstreamBytes),
+				"upstream_lines":            atomic.LoadInt64(&upstreamLines),
+				"cf_ray":                    cfRay,
+			}
+			if b, err := json.Marshal(detail); err == nil {
+				SetOpsStreamFault(c, OpsStreamFault{
+					Phase:      "upstream",
+					Type:       "stream_timeout",
+					StatusCode: 504,
+					Message:    "Upstream did not send any data for too long (stream timeout)",
+					Detail:     string(b),
+					Owner:      "provider",
+					Source:     "upstream_http",
+				})
+			}
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,

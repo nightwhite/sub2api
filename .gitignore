@@ -78,6 +78,9 @@ Desktop.ini
 # ===================
 tmp/
 temp/
+
+# Local reference repos / scratch space (not part of the product)
+.reference/
 *.tmp
 *.temp
 *.log

@@ -319,6 +319,165 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		if status < 400 {
+			// Streaming faults may not surface as HTTP errors (headers already sent),
+			// but we still want them visible in the Ops UI for troubleshooting.
+			if v, ok := c.Get(service.OpsStreamFaultKey); ok {
+				fault, ok := v.(service.OpsStreamFault)
+				if ok {
+					apiKey, _ := middleware2.GetAPIKeyFromContext(c)
+					clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+
+					model, _ := c.Get(opsModelKey)
+					streamV, _ := c.Get(opsStreamKey)
+					accountIDV, _ := c.Get(opsAccountIDKey)
+
+					var modelName string
+					if s, ok := model.(string); ok {
+						modelName = s
+					}
+					stream := false
+					if b, ok := streamV.(bool); ok {
+						stream = b
+					}
+
+					// Use last upstream event's account_id when available; else fall back to selected account.
+					var events []*service.OpsUpstreamErrorEvent
+					if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+						if arr, ok := v.([]*service.OpsUpstreamErrorEvent); ok && len(arr) > 0 {
+							events = arr
+						}
+					}
+					var accountID *int64
+					if len(events) > 0 {
+						if last := events[len(events)-1]; last != nil && last.AccountID > 0 {
+							id := last.AccountID
+							accountID = &id
+						}
+					}
+					if accountID == nil {
+						if v, ok := accountIDV.(int64); ok && v > 0 {
+							accountID = &v
+						}
+					}
+
+					fallbackPlatform := guessPlatformFromPath(c.Request.URL.Path)
+					platform := resolveOpsPlatform(apiKey, fallbackPlatform)
+
+					requestID := c.Writer.Header().Get("X-Request-Id")
+					if requestID == "" {
+						requestID = c.Writer.Header().Get("x-request-id")
+					}
+
+					msg := strings.TrimSpace(fault.Message)
+					if msg == "" {
+						msg = "Streaming fault"
+						if t := strings.TrimSpace(fault.Type); t != "" {
+							msg += ": " + t
+						}
+					}
+					msg = truncateString(msg, 2048)
+
+					phase := strings.TrimSpace(strings.ToLower(fault.Phase))
+					if phase == "" {
+						phase = "internal"
+					}
+					typ := strings.TrimSpace(fault.Type)
+					if typ == "" {
+						typ = "stream_fault"
+					}
+
+					code := fault.StatusCode
+					if code <= 0 {
+						code = 499
+					}
+
+					owner := strings.TrimSpace(strings.ToLower(fault.Owner))
+					if owner == "" {
+						owner = classifyOpsErrorOwner(phase, msg)
+					}
+					source := strings.TrimSpace(strings.ToLower(fault.Source))
+					if source == "" {
+						source = classifyOpsErrorSource(phase, msg)
+					}
+
+					entry := &service.OpsInsertErrorLogInput{
+						RequestID:       requestID,
+						ClientRequestID: clientRequestID,
+
+						AccountID: accountID,
+						Platform:  platform,
+						Model:     modelName,
+						RequestPath: func() string {
+							if c.Request != nil && c.Request.URL != nil {
+								return c.Request.URL.Path
+							}
+							return ""
+						}(),
+						Stream:    stream,
+						UserAgent: c.GetHeader("User-Agent"),
+
+						ErrorPhase: "request",
+						ErrorType:  typ,
+						Severity:   classifyOpsSeverity(typ, code),
+						StatusCode: code,
+
+						IsBusinessLimited: false,
+						IsCountTokens:     isCountTokensRequest(c),
+
+						ErrorMessage: msg,
+						ErrorBody:    strings.TrimSpace(fault.Detail),
+
+						ErrorSource: source,
+						ErrorOwner:  owner,
+
+						UpstreamErrors: events,
+
+						IsRetryable: classifyOpsIsRetryable(typ, code),
+						RetryCount:  0,
+						CreatedAt:   time.Now(),
+					}
+					// Keep phase value stable (validated).
+					entry.ErrorPhase = phase
+
+					if apiKey != nil {
+						entry.APIKeyID = &apiKey.ID
+						if apiKey.User != nil {
+							entry.UserID = &apiKey.User.ID
+						}
+						if apiKey.GroupID != nil {
+							entry.GroupID = apiKey.GroupID
+						}
+						// Prefer group platform if present (more stable than inferring from path).
+						if apiKey.Group != nil && apiKey.Group.Platform != "" {
+							entry.Platform = apiKey.Group.Platform
+						}
+					}
+
+					var clientIP string
+					if ip := strings.TrimSpace(ip.GetClientIP(c)); ip != "" {
+						clientIP = ip
+						entry.ClientIP = &clientIP
+					}
+
+					var requestBody []byte
+					if v, ok := c.Get(opsRequestBodyKey); ok {
+						if b, ok := v.([]byte); ok && len(b) > 0 {
+							requestBody = b
+						}
+					}
+					entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
+
+					if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
+						if skip, _ := v.(bool); skip {
+							return
+						}
+					}
+
+					enqueueOpsErrorLog(ops, entry, requestBody)
+					return
+				}
+			}
+
 			// Even when the client request succeeds, we still want to persist upstream error attempts
 			// (retries/failover) so ops can observe upstream instability that gets "covered" by retries.
 			var events []*service.OpsUpstreamErrorEvent
