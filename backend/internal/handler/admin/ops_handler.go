@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -704,6 +705,77 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	}
 
 	response.Paginated(c, out.Items, out.Total, out.Page, out.PageSize)
+}
+
+type opsRequestDebugBundleResponse struct {
+	Key string `json:"key"`
+
+	UsageLogs []dto.AdminUsageLog    `json:"usage_logs"`
+	ErrorLogs []*service.OpsErrorLog `json:"error_logs"`
+}
+
+// GetRequestDebugBundle returns correlated usage logs + ops error logs for a request key.
+// The key can be either request_id or client_request_id.
+// GET /api/v1/admin/ops/requests/:id
+func (h *OpsHandler) GetRequestDebugBundle(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	key := strings.TrimSpace(c.Param("id"))
+	if key == "" {
+		response.BadRequest(c, "Invalid request id")
+		return
+	}
+
+	limit := 50
+	if v := strings.TrimSpace(c.Query("limit")); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 1 {
+			response.BadRequest(c, "Invalid limit")
+			return
+		}
+		if parsed > 200 {
+			parsed = 200
+		}
+		limit = parsed
+	}
+
+	bundle, err := h.opsService.GetRequestDebugBundle(c.Request.Context(), key, limit)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Failed to load request debug bundle")
+		return
+	}
+
+	out := opsRequestDebugBundleResponse{
+		Key:       key,
+		UsageLogs: make([]dto.AdminUsageLog, 0),
+		ErrorLogs: make([]*service.OpsErrorLog, 0),
+	}
+	if bundle != nil {
+		out.Key = bundle.Key
+		if len(bundle.UsageLogs) > 0 {
+			out.UsageLogs = make([]dto.AdminUsageLog, 0, len(bundle.UsageLogs))
+			for _, l := range bundle.UsageLogs {
+				if l == nil {
+					continue
+				}
+				if mapped := dto.UsageLogFromServiceAdmin(l); mapped != nil {
+					out.UsageLogs = append(out.UsageLogs, *mapped)
+				}
+			}
+		}
+		if bundle.ErrorLogs != nil {
+			out.ErrorLogs = bundle.ErrorLogs
+		}
+	}
+
+	response.Success(c, out)
 }
 
 type opsRetryRequest struct {

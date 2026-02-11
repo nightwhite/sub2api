@@ -2736,6 +2736,7 @@ export default {
         requestIdCopied: 'Request ID copied',
         copyFailed: 'Copy failed',
         copy: 'Copy',
+        viewDetail: 'View Details',
         viewError: 'View Error',
         kind: {
           success: 'SUCCESS',
@@ -2747,6 +2748,8 @@ export default {
           platform: 'Platform',
           model: 'Model',
           duration: 'Duration',
+          tokens: 'Tokens',
+          ttft: 'TTFT',
           status: 'Status',
           requestId: 'Request ID',
           actions: 'Actions'

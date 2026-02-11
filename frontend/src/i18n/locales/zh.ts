@@ -2907,6 +2907,7 @@ export default {
         requestIdCopied: '请求ID已复制',
         copyFailed: '复制失败',
         copy: '复制',
+        viewDetail: '查看详情',
         viewError: '查看错误',
         kind: {
           success: '成功',
@@ -2918,6 +2919,8 @@ export default {
           platform: '平台',
           model: '模型',
           duration: '耗时',
+          tokens: 'Tokens',
+          ttft: '首 token',
           status: '状态码',
           requestId: '请求ID',
           actions: '操作'

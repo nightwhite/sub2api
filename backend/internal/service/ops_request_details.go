@@ -25,6 +25,13 @@ type OpsRequestDetail struct {
 	DurationMs *int `json:"duration_ms,omitempty"`
 	StatusCode *int `json:"status_code,omitempty"`
 
+	// Tokens are only available for success rows (usage_logs).
+	TotalTokens  *int `json:"total_tokens,omitempty"`
+	InputTokens  *int `json:"input_tokens,omitempty"`
+	OutputTokens *int `json:"output_tokens,omitempty"`
+
+	FirstTokenMs *int `json:"first_token_ms,omitempty"`
+
 	// When Kind == "error", ErrorID links to /admin/ops/errors/:id.
 	ErrorID *int64 `json:"error_id,omitempty"`
 

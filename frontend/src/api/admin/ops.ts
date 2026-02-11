@@ -5,7 +5,7 @@
  */
 
 import { apiClient } from '../client'
-import type { PaginatedResponse } from '@/types'
+import type { AdminUsageLog, PaginatedResponse } from '@/types'
 
 export type OpsRetryMode = 'client' | 'upstream'
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
@@ -175,6 +175,11 @@ export interface OpsRequestDetail {
   duration_ms?: number | null
   status_code?: number | null
 
+  total_tokens?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  first_token_ms?: number | null
+
   error_id?: number | null
   phase?: string
   severity?: string
@@ -186,6 +191,12 @@ export interface OpsRequestDetail {
   group_id?: number | null
 
   stream?: boolean
+}
+
+export interface OpsRequestDebugBundle {
+  key: string
+  usage_logs: AdminUsageLog[]
+  error_logs: OpsErrorLog[]
 }
 
 export interface OpsRequestDetailsParams {
@@ -1079,6 +1090,12 @@ export async function listRequestDetails(params: OpsRequestDetailsParams): Promi
   return data
 }
 
+export async function getRequestDebugBundle(key: string, params: { limit?: number } = {}): Promise<OpsRequestDebugBundle> {
+  const safeKey = encodeURIComponent(String(key || '').trim())
+  const { data } = await apiClient.get<OpsRequestDebugBundle>(`/admin/ops/requests/${safeKey}`, { params })
+  return data
+}
+
 // Alert rules
 export async function listAlertRules(): Promise<AlertRule[]> {
   const { data } = await apiClient.get<AlertRule[]>('/admin/ops/alert-rules')
@@ -1214,6 +1231,7 @@ export const opsAPI = {
   listRequestErrorUpstreamErrors,
 
   listRequestDetails,
+  getRequestDebugBundle,
   listAlertRules,
   createAlertRule,
   updateAlertRule,

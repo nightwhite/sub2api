@@ -94,6 +94,10 @@ WITH combined AS (
     ul.model AS model,
     ul.duration_ms AS duration_ms,
     NULL::INT AS status_code,
+    (ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens + ul.cache_creation_5m_tokens + ul.cache_creation_1h_tokens)::INT AS total_tokens,
+    ul.input_tokens::INT AS input_tokens,
+    ul.output_tokens::INT AS output_tokens,
+    ul.first_token_ms AS first_token_ms,
     NULL::BIGINT AS error_id,
     NULL::TEXT AS phase,
     NULL::TEXT AS severity,
@@ -118,6 +122,10 @@ WITH combined AS (
     o.model AS model,
     o.duration_ms AS duration_ms,
     o.status_code AS status_code,
+    NULL::INT AS total_tokens,
+    NULL::INT AS input_tokens,
+    NULL::INT AS output_tokens,
+    NULL::INT AS first_token_ms,
     o.id AS error_id,
     o.error_phase AS phase,
     o.severity AS severity,
@@ -167,6 +175,10 @@ SELECT
   model,
   duration_ms,
   status_code,
+  total_tokens,
+  input_tokens,
+  output_tokens,
+  first_token_ms,
   error_id,
   phase,
   severity,
@@ -213,9 +225,13 @@ LIMIT $%d OFFSET $%d
 			platform  sql.NullString
 			model     sql.NullString
 
-			durationMs sql.NullInt64
-			statusCode sql.NullInt64
-			errorID    sql.NullInt64
+			durationMs   sql.NullInt64
+			statusCode   sql.NullInt64
+			totalTokens  sql.NullInt64
+			inputTokens  sql.NullInt64
+			outputTokens sql.NullInt64
+			firstTokenMs sql.NullInt64
+			errorID      sql.NullInt64
 
 			phase    sql.NullString
 			severity sql.NullString
@@ -237,6 +253,10 @@ LIMIT $%d OFFSET $%d
 			&model,
 			&durationMs,
 			&statusCode,
+			&totalTokens,
+			&inputTokens,
+			&outputTokens,
+			&firstTokenMs,
 			&errorID,
 			&phase,
 			&severity,
@@ -257,12 +277,16 @@ LIMIT $%d OFFSET $%d
 			Platform:  strings.TrimSpace(platform.String),
 			Model:     strings.TrimSpace(model.String),
 
-			DurationMs: toIntPtr(durationMs),
-			StatusCode: toIntPtr(statusCode),
-			ErrorID:    toInt64Ptr(errorID),
-			Phase:      phase.String,
-			Severity:   severity.String,
-			Message:    message.String,
+			DurationMs:   toIntPtr(durationMs),
+			StatusCode:   toIntPtr(statusCode),
+			TotalTokens:  toIntPtr(totalTokens),
+			InputTokens:  toIntPtr(inputTokens),
+			OutputTokens: toIntPtr(outputTokens),
+			FirstTokenMs: toIntPtr(firstTokenMs),
+			ErrorID:      toInt64Ptr(errorID),
+			Phase:        phase.String,
+			Severity:     severity.String,
+			Message:      message.String,
 
 			UserID:    toInt64Ptr(userID),
 			APIKeyID:  toInt64Ptr(apiKeyID),

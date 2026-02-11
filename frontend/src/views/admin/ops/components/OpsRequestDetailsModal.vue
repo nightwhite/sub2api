@@ -7,6 +7,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsRequestDetailsParams, type OpsRequestDetail } from '@/api/admin/ops'
 import { parseTimeRangeMinutes, formatDateTime } from '../utils/opsFormatters'
+import OpsRequestDebugDrawer from './OpsRequestDebugDrawer.vue'
 
 export interface OpsRequestDetailsPreset {
   title: string
@@ -40,7 +41,14 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 
-const close = () => emit('update:modelValue', false)
+const close = () => {
+  showDebugDrawer.value = false
+  debugRequestKey.value = null
+  emit('update:modelValue', false)
+}
+
+const showDebugDrawer = ref(false)
+const debugRequestKey = ref<string | null>(null)
 
 const rangeLabel = computed(() => {
   const minutes = parseTimeRangeMinutes(props.timeRange)
@@ -142,6 +150,13 @@ function openErrorDetail(errorId: number | null | undefined) {
   emit('openErrorDetail', errorId)
 }
 
+function openDebugDrawer(requestKey: string | null | undefined) {
+  const key = String(requestKey || '').trim()
+  if (!key) return
+  debugRequestKey.value = key
+  showDebugDrawer.value = true
+}
+
 const kindBadgeClass = (kind: string) => {
   if (kind === 'error') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
   return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
@@ -208,6 +223,12 @@ const kindBadgeClass = (kind: string) => {
                     {{ t('admin.ops.requestDetails.table.duration') }}
                   </th>
                   <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    {{ t('admin.ops.requestDetails.table.tokens') }}
+                  </th>
+                  <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    {{ t('admin.ops.requestDetails.table.ttft') }}
+                  </th>
+                  <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     {{ t('admin.ops.requestDetails.table.status') }}
                   </th>
                   <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -238,6 +259,19 @@ const kindBadgeClass = (kind: string) => {
                     {{ typeof row.duration_ms === 'number' ? `${row.duration_ms} ms` : '-' }}
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                    <span
+                      v-if="typeof row.total_tokens === 'number'"
+                      :class="row.total_tokens === 0 && (row.input_tokens ?? 0) === 0 && (row.output_tokens ?? 0) === 0 ? 'font-bold text-red-600 dark:text-red-300' : ''"
+                    >
+                      {{ row.total_tokens }}
+                      <span class="ml-1 text-[10px] text-gray-400 dark:text-gray-500">({{ row.input_tokens ?? 0 }}/{{ row.output_tokens ?? 0 }})</span>
+                    </span>
+                    <span v-else class="text-xs text-gray-400">-</span>
+                  </td>
+                  <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                    {{ typeof row.first_token_ms === 'number' ? `${row.first_token_ms} ms` : '-' }}
+                  </td>
+                  <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
                     {{ row.status_code ?? '-' }}
                   </td>
                   <td class="px-4 py-3">
@@ -255,14 +289,23 @@ const kindBadgeClass = (kind: string) => {
                     <span v-else class="text-xs text-gray-400">-</span>
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-right">
-                    <button
-                      v-if="row.kind === 'error' && row.error_id"
-                      class="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
-                      @click="openErrorDetail(row.error_id)"
-                    >
-                      {{ t('admin.ops.requestDetails.viewError') }}
-                    </button>
-                    <span v-else class="text-xs text-gray-400">-</span>
+                    <div class="flex items-center justify-end gap-2">
+                      <button
+                        v-if="row.request_id"
+                        class="rounded-lg bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
+                        @click="openDebugDrawer(row.request_id)"
+                      >
+                        {{ t('admin.ops.requestDetails.viewDetail') }}
+                      </button>
+                      <button
+                        v-if="row.kind === 'error' && row.error_id"
+                        class="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+                        @click="openErrorDetail(row.error_id)"
+                      >
+                        {{ t('admin.ops.requestDetails.viewError') }}
+                      </button>
+                      <span v-if="!row.request_id && !(row.kind === 'error' && row.error_id)" class="text-xs text-gray-400">-</span>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -281,4 +324,10 @@ const kindBadgeClass = (kind: string) => {
       </div>
     </template>
   </BaseDialog>
+
+  <OpsRequestDebugDrawer
+    :show="showDebugDrawer"
+    :request-key="debugRequestKey"
+    @update:show="showDebugDrawer = $event"
+  />
 </template>

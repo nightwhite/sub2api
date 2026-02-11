@@ -465,6 +465,16 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 							requestBody = b
 						}
 					}
+					// Do NOT store full request bodies for streaming faults:
+					// - prompts can be extremely large
+					// - this path is for troubleshooting markers, not retry execution
+					// Keep only body size as a hint.
+					if len(requestBody) > 0 {
+						bytesLen := len(requestBody)
+						entry.RequestBodyBytes = &bytesLen
+						entry.RequestBodyTruncated = true
+						requestBody = nil
+					}
 					entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
 
 					if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
@@ -473,7 +483,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 						}
 					}
 
-					enqueueOpsErrorLog(ops, entry, requestBody)
+					enqueueOpsErrorLog(ops, entry, nil)
 					return
 				}
 			}
@@ -693,7 +703,14 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 					requestBody = b
 				}
 			}
-			// Store request headers/body only when an upstream error occurred to keep overhead minimal.
+			// For recovered upstream errors (status<400), avoid storing full request bodies.
+			// Keep only body size for troubleshooting.
+			if len(requestBody) > 0 {
+				bytesLen := len(requestBody)
+				entry.RequestBodyBytes = &bytesLen
+				entry.RequestBodyTruncated = true
+				requestBody = nil
+			}
 			entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
 
 			// Skip logging if a passthrough rule with skip_monitoring=true matched.
@@ -703,7 +720,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 
-			enqueueOpsErrorLog(ops, entry, requestBody)
+			enqueueOpsErrorLog(ops, entry, nil)
 			return
 		}
 

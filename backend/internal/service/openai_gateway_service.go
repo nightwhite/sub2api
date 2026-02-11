@@ -1444,6 +1444,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				elapsedMs := time.Since(startTime).Milliseconds()
+				totalTokens := usage.InputTokens + usage.OutputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+
 				// Upstream finished (EOF). If we did not observe a completion marker, log for troubleshooting.
 				if !clientDisconnected && !sawDone && !sawCompleted {
 					lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -1457,7 +1460,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 						"account_type", account.Type,
 						"model", originalModel,
 						"mapped_model", mappedModel,
-						"elapsed_ms", time.Since(startTime).Milliseconds(),
+						"elapsed_ms", elapsedMs,
 						"last_upstream_read_age_ms", time.Since(lastRead).Milliseconds(),
 						"downstream_bytes", downstreamBytes,
 						"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
@@ -1471,7 +1474,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 					// Record into Ops for UI debugging (tokens may stay 0 if no completion event).
 					detail := map[string]any{
 						"kind":                       "upstream_eof_unexpected",
-						"elapsed_ms":                 time.Since(startTime).Milliseconds(),
+						"elapsed_ms":                 elapsedMs,
 						"first_token_ms":             firstTokenMs,
 						"last_upstream_read_age_ms":  time.Since(lastRead).Milliseconds(),
 						"downstream_bytes":           downstreamBytes,
@@ -1493,6 +1496,68 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 							Source:     "upstream_http",
 						})
 					}
+				}
+
+				// If the stream ended but we never observed usage, record a lightweight ops marker to
+				// help debug "input=0 & output=0" cases.
+				//
+				// Only do this when we observed a completion marker ([DONE] or response.completed),
+				// otherwise upstream_eof_unexpected already records a clearer root cause.
+				if !clientDisconnected && usage.InputTokens == 0 && usage.OutputTokens == 0 && (sawDone || sawCompleted) {
+					detail := map[string]any{
+						"kind":                        "zero_tokens",
+						"elapsed_ms":                  elapsedMs,
+						"first_token_ms":              firstTokenMs,
+						"input_tokens":                usage.InputTokens,
+						"output_tokens":               usage.OutputTokens,
+						"cache_creation_input_tokens": usage.CacheCreationInputTokens,
+						"cache_read_input_tokens":     usage.CacheReadInputTokens,
+						"total_tokens":                totalTokens,
+						"saw_done":                    sawDone,
+						"saw_completed":               sawCompleted,
+						"downstream_bytes":            downstreamBytes,
+						"upstream_bytes":              atomic.LoadInt64(&upstreamBytes),
+						"upstream_lines":              atomic.LoadInt64(&upstreamLines),
+						"keepalive_sent":              keepaliveSent,
+						"stream_interval_seconds":     int(streamInterval.Seconds()),
+						"keepalive_interval_seconds":  int(keepaliveInterval.Seconds()),
+						"cf_ray":                      cfRay,
+					}
+					if b, err := json.Marshal(detail); err == nil {
+						SetOpsStreamFault(c, OpsStreamFault{
+							Phase:      "upstream",
+							Type:       "zero_tokens",
+							StatusCode: 520,
+							Message:    "Streaming ended but no usage was observed (input=0 output=0)",
+							Detail:     string(b),
+							Owner:      "provider",
+							Source:     "upstream_http",
+						})
+					}
+					slog.Warn("stream_zero_tokens",
+						"platform", PlatformOpenAI,
+						"request_path", requestPath,
+						"client_request_id", clientRequestID,
+						"upstream_request_id", upstreamRequestID,
+						"account_id", account.ID,
+						"account_name", account.Name,
+						"account_type", account.Type,
+						"model", originalModel,
+						"mapped_model", mappedModel,
+						"elapsed_ms", elapsedMs,
+						"input_tokens", usage.InputTokens,
+						"output_tokens", usage.OutputTokens,
+						"cache_creation_input_tokens", usage.CacheCreationInputTokens,
+						"cache_read_input_tokens", usage.CacheReadInputTokens,
+						"total_tokens", totalTokens,
+						"downstream_bytes", downstreamBytes,
+						"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+						"upstream_lines", atomic.LoadInt64(&upstreamLines),
+						"keepalive_sent", keepaliveSent,
+						"stream_interval_seconds", int(streamInterval.Seconds()),
+						"keepalive_interval_seconds", int(keepaliveInterval.Seconds()),
+						"cf_ray", cfRay,
+					)
 				}
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 			}
