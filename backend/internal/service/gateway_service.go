@@ -4121,7 +4121,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	// 设置SSE响应头
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
@@ -4136,14 +4136,24 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return nil, errors.New("streaming not supported")
 	}
 
+	clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+	requestPath := ""
+	if c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	cfRay := strings.TrimSpace(c.GetHeader("CF-Ray"))
+
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 
 	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	var upstreamBytes int64
+	var upstreamLines int64
 
-	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt, bytesRead: &upstreamBytes})
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -4169,6 +4179,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
+			atomic.AddInt64(&upstreamLines, 1)
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -4207,6 +4218,33 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	needModelReplace := originalModel != mappedModel
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
+	var clientWriteErr error
+	var downstreamBytes int64
+
+	logClientDisconnect := func(writeErr error) {
+		if writeErr == nil || clientWriteErr != nil {
+			return
+		}
+		clientWriteErr = writeErr
+		slog.Warn("stream_client_disconnect",
+			"platform", account.Platform,
+			"request_path", requestPath,
+			"client_request_id", clientRequestID,
+			"upstream_request_id", upstreamRequestID,
+			"account_id", account.ID,
+			"account_name", account.Name,
+			"account_type", account.Type,
+			"model", originalModel,
+			"mapped_model", mappedModel,
+			"elapsed_ms", time.Since(startTime).Milliseconds(),
+			"downstream_bytes", downstreamBytes,
+			"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+			"upstream_lines", atomic.LoadInt64(&upstreamLines),
+			"stream_interval_seconds", int(streamInterval.Seconds()),
+			"cf_ray", cfRay,
+			"error", writeErr,
+		)
+	}
 
 	pendingEventLines := make([]string, 0, 4)
 
@@ -4348,11 +4386,13 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 				for _, block := range outputBlocks {
 					if !clientDisconnected {
-						if _, werr := fmt.Fprint(w, block); werr != nil {
+						n, werr := fmt.Fprint(w, block)
+						if werr != nil {
 							clientDisconnected = true
-							log.Printf("Client disconnected during streaming, continuing to drain upstream for billing")
+							logClientDisconnect(werr)
 							break
 						}
+						downstreamBytes += int64(n)
 						flusher.Flush()
 					}
 					if data != "" {
@@ -4375,10 +4415,55 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			if clientDisconnected {
 				// 客户端已断开，上游也超时了，返回已收集的 usage
-				log.Printf("Upstream timeout after client disconnect, returning collected usage")
+				slog.Info("stream_upstream_idle_timeout_after_client_disconnect",
+					"platform", account.Platform,
+					"request_path", requestPath,
+					"client_request_id", clientRequestID,
+					"upstream_request_id", upstreamRequestID,
+					"account_id", account.ID,
+					"account_name", account.Name,
+					"account_type", account.Type,
+					"model", originalModel,
+					"mapped_model", mappedModel,
+					"elapsed_ms", time.Since(startTime).Milliseconds(),
+					"last_upstream_read_age_ms", time.Since(lastRead).Milliseconds(),
+					"stream_interval_seconds", int(streamInterval.Seconds()),
+					"downstream_bytes", downstreamBytes,
+					"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+					"upstream_lines", atomic.LoadInt64(&upstreamLines),
+					"cf_ray", cfRay,
+				)
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 			}
-			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			slog.Warn("stream_upstream_idle_timeout",
+				"platform", account.Platform,
+				"request_path", requestPath,
+				"client_request_id", clientRequestID,
+				"upstream_request_id", upstreamRequestID,
+				"account_id", account.ID,
+				"account_name", account.Name,
+				"account_type", account.Type,
+				"model", originalModel,
+				"mapped_model", mappedModel,
+				"elapsed_ms", time.Since(startTime).Milliseconds(),
+				"last_upstream_read_age_ms", time.Since(lastRead).Milliseconds(),
+				"stream_interval_seconds", int(streamInterval.Seconds()),
+				"downstream_bytes", downstreamBytes,
+				"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+				"upstream_lines", atomic.LoadInt64(&upstreamLines),
+				"cf_ray", cfRay,
+			)
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				UpstreamRequestID:  upstreamRequestID,
+				Kind:               "stream_timeout",
+				Message:            "stream data interval timeout",
+				Detail: fmt.Sprintf("interval_seconds=%d last_read_age_ms=%d upstream_bytes=%d downstream_bytes=%d",
+					int(streamInterval.Seconds()), time.Since(lastRead).Milliseconds(), atomic.LoadInt64(&upstreamBytes), downstreamBytes),
+			})
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)

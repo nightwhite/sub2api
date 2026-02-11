@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -256,12 +258,25 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 			// Send ping to keep connection alive
 			if !*streamStarted {
 				c.Header("Content-Type", "text/event-stream")
-				c.Header("Cache-Control", "no-cache")
+				c.Header("Cache-Control", "no-cache, no-transform")
 				c.Header("Connection", "keep-alive")
 				c.Header("X-Accel-Buffering", "no")
 				*streamStarted = true
 			}
 			if _, err := fmt.Fprint(c.Writer, string(h.pingFormat)); err != nil {
+				clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+				requestPath := ""
+				if c.Request != nil && c.Request.URL != nil {
+					requestPath = c.Request.URL.Path
+				}
+				slog.Warn("stream_ping_write_failed",
+					"slot_type", slotType,
+					"id", id,
+					"max_concurrency", maxConcurrency,
+					"request_path", requestPath,
+					"client_request_id", clientRequestID,
+					"error", err,
+				)
 				return nil, err
 			}
 			flusher.Flush()

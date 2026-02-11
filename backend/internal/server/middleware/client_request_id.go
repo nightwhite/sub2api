@@ -18,13 +18,17 @@ func ClientRequestID() gin.HandlerFunc {
 			return
 		}
 
+		var id string
 		if v := c.Request.Context().Value(ctxkey.ClientRequestID); v != nil {
-			c.Next()
-			return
+			id, _ = v.(string)
+		}
+		if id == "" {
+			id = uuid.New().String()
+			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, id))
 		}
 
-		id := uuid.New().String()
-		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, id))
+		// Expose the correlation ID to clients for debugging (safe, no secrets).
+		c.Writer.Header().Set("x-sub2api-request-id", id)
 		c.Next()
 	}
 }

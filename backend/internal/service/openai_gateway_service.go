@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -887,6 +889,35 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// Send request
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
+		// Streaming 断开常见原因：下游（Cloudflare/Nginx/客户端）提前取消，导致上游请求被 context cancel。
+		// 这里补一条结构化日志，方便直接从容器日志定位原因与关联请求。
+		if reqStream || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string)
+			requestPath := ""
+			cfRay := ""
+			if c != nil {
+				if c.Request != nil && c.Request.URL != nil {
+					requestPath = c.Request.URL.Path
+				}
+				cfRay = strings.TrimSpace(c.GetHeader("CF-Ray"))
+			}
+			slog.Warn("openai_upstream_request_failed",
+				"platform", PlatformOpenAI,
+				"request_path", requestPath,
+				"client_request_id", clientRequestID,
+				"account_id", account.ID,
+				"account_name", account.Name,
+				"account_type", account.Type,
+				"model", originalModel,
+				"mapped_model", mappedModel,
+				"stream", reqStream,
+				"proxy_enabled", proxyURL != "",
+				"elapsed_ms", time.Since(startTime).Milliseconds(),
+				"cf_ray", cfRay,
+				"error", sanitizeUpstreamErrorMessage(err.Error()),
+			)
+		}
+
 		// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
@@ -1208,7 +1239,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 	// Set SSE response headers
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
@@ -1223,6 +1254,14 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		return nil, errors.New("streaming not supported")
 	}
 
+	clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+	requestPath := ""
+	if c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	cfRay := strings.TrimSpace(c.GetHeader("CF-Ray"))
+
 	usage := &OpenAIUsage{}
 	var firstTokenMs *int
 
@@ -1230,8 +1269,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	// when the upstream is slowly streaming a very long SSE line.
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	var upstreamBytes int64
+	var upstreamLines int64
 
-	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt, bytesRead: &upstreamBytes})
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -1256,6 +1297,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
+			atomic.AddInt64(&upstreamLines, 1)
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -1297,6 +1339,38 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	}
 	// 记录上次收到上游数据的时间，用于控制 keepalive 发送频率
 	lastDataAt := time.Now()
+	var downstreamBytes int64
+	var keepaliveSent int64
+	sawDone := false
+	sawCompleted := false
+	var clientWriteErr error
+
+	logClientDisconnect := func(writeErr error) {
+		if writeErr == nil || clientWriteErr != nil {
+			return
+		}
+		clientWriteErr = writeErr
+		slog.Warn("stream_client_disconnect",
+			"platform", PlatformOpenAI,
+			"request_path", requestPath,
+			"client_request_id", clientRequestID,
+			"upstream_request_id", upstreamRequestID,
+			"account_id", account.ID,
+			"account_name", account.Name,
+			"account_type", account.Type,
+			"model", originalModel,
+			"mapped_model", mappedModel,
+			"elapsed_ms", time.Since(startTime).Milliseconds(),
+			"downstream_bytes", downstreamBytes,
+			"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+			"upstream_lines", atomic.LoadInt64(&upstreamLines),
+			"keepalive_sent", keepaliveSent,
+			"stream_interval_seconds", int(streamInterval.Seconds()),
+			"keepalive_interval_seconds", int(keepaliveInterval.Seconds()),
+			"cf_ray", cfRay,
+			"error", writeErr,
+		)
+	}
 
 	// 仅发送一次错误事件，避免多次写入导致协议混乱。
 	// 注意：OpenAI `/v1/responses` streaming 事件必须符合 OpenAI Responses schema；
@@ -1329,13 +1403,56 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				// Upstream finished (EOF). If we did not observe a completion marker, log for troubleshooting.
+				if !clientDisconnected && !sawDone && !sawCompleted {
+					lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
+					slog.Warn("stream_upstream_eof_unexpected",
+						"platform", PlatformOpenAI,
+						"request_path", requestPath,
+						"client_request_id", clientRequestID,
+						"upstream_request_id", upstreamRequestID,
+						"account_id", account.ID,
+						"account_name", account.Name,
+						"account_type", account.Type,
+						"model", originalModel,
+						"mapped_model", mappedModel,
+						"elapsed_ms", time.Since(startTime).Milliseconds(),
+						"last_upstream_read_age_ms", time.Since(lastRead).Milliseconds(),
+						"downstream_bytes", downstreamBytes,
+						"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+						"upstream_lines", atomic.LoadInt64(&upstreamLines),
+						"keepalive_sent", keepaliveSent,
+						"stream_interval_seconds", int(streamInterval.Seconds()),
+						"keepalive_interval_seconds", int(keepaliveInterval.Seconds()),
+						"cf_ray", cfRay,
+					)
+				}
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 			}
 			if ev.err != nil {
 				// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
 				// /v1/responses 的 SSE 事件必须符合 OpenAI 协议；这里不注入自定义 error event，避免下游 SDK 解析失败。
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					log.Printf("Context canceled during streaming, returning collected usage")
+					if !clientDisconnected {
+						slog.Info("stream_context_canceled",
+							"platform", PlatformOpenAI,
+							"request_path", requestPath,
+							"client_request_id", clientRequestID,
+							"upstream_request_id", upstreamRequestID,
+							"account_id", account.ID,
+							"account_name", account.Name,
+							"account_type", account.Type,
+							"model", originalModel,
+							"mapped_model", mappedModel,
+							"elapsed_ms", time.Since(startTime).Milliseconds(),
+							"downstream_bytes", downstreamBytes,
+							"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+							"upstream_lines", atomic.LoadInt64(&upstreamLines),
+							"keepalive_sent", keepaliveSent,
+							"cf_ray", cfRay,
+							"error", ev.err,
+						)
+					}
 					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 				}
 				// 客户端已断开时，上游出错仅影响体验，不影响计费；返回已收集 usage
@@ -1344,10 +1461,46 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
-					log.Printf("SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
+					slog.Warn("stream_sse_line_too_long",
+						"platform", PlatformOpenAI,
+						"request_path", requestPath,
+						"client_request_id", clientRequestID,
+						"upstream_request_id", upstreamRequestID,
+						"account_id", account.ID,
+						"account_name", account.Name,
+						"account_type", account.Type,
+						"model", originalModel,
+						"mapped_model", mappedModel,
+						"elapsed_ms", time.Since(startTime).Milliseconds(),
+						"max_line_size", maxLineSize,
+						"downstream_bytes", downstreamBytes,
+						"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+						"upstream_lines", atomic.LoadInt64(&upstreamLines),
+						"keepalive_sent", keepaliveSent,
+						"cf_ray", cfRay,
+						"error", ev.err,
+					)
 					sendErrorEvent("response_too_large")
 					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
 				}
+				slog.Warn("stream_upstream_read_error",
+					"platform", PlatformOpenAI,
+					"request_path", requestPath,
+					"client_request_id", clientRequestID,
+					"upstream_request_id", upstreamRequestID,
+					"account_id", account.ID,
+					"account_name", account.Name,
+					"account_type", account.Type,
+					"model", originalModel,
+					"mapped_model", mappedModel,
+					"elapsed_ms", time.Since(startTime).Milliseconds(),
+					"downstream_bytes", downstreamBytes,
+					"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+					"upstream_lines", atomic.LoadInt64(&upstreamLines),
+					"keepalive_sent", keepaliveSent,
+					"cf_ray", cfRay,
+					"error", ev.err,
+				)
 				sendErrorEvent("stream_read_error")
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
 			}
@@ -1358,6 +1511,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			// Extract data from SSE line (supports both "data: " and "data:" formats)
 			if openaiSSEDataRe.MatchString(line) {
 				data := openaiSSEDataRe.ReplaceAllString(line, "")
+				if data == "[DONE]" {
+					sawDone = true
+				}
 
 				// Replace model in response if needed
 				if needModelReplace {
@@ -1372,10 +1528,11 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 				// 写入客户端（客户端断开后继续 drain 上游）
 				if !clientDisconnected {
-					if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					if n, err := fmt.Fprintf(w, "%s\n", line); err != nil {
 						clientDisconnected = true
-						log.Printf("Client disconnected during streaming, continuing to drain upstream for billing")
+						logClientDisconnect(err)
 					} else {
+						downstreamBytes += int64(n)
 						flusher.Flush()
 					}
 				}
@@ -1385,14 +1542,17 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
 				}
-				s.parseSSEUsage(data, usage)
+				if s.parseSSEUsage(data, usage) {
+					sawCompleted = true
+				}
 			} else {
 				// Forward non-data lines as-is
 				if !clientDisconnected {
-					if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					if n, err := fmt.Fprintf(w, "%s\n", line); err != nil {
 						clientDisconnected = true
-						log.Printf("Client disconnected during streaming, continuing to drain upstream for billing")
+						logClientDisconnect(err)
 					} else {
+						downstreamBytes += int64(n)
 						flusher.Flush()
 					}
 				}
@@ -1407,7 +1567,37 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				log.Printf("Upstream timeout after client disconnect, returning collected usage")
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 			}
-			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			slog.Warn("stream_upstream_idle_timeout",
+				"platform", PlatformOpenAI,
+				"request_path", requestPath,
+				"client_request_id", clientRequestID,
+				"upstream_request_id", upstreamRequestID,
+				"account_id", account.ID,
+				"account_name", account.Name,
+				"account_type", account.Type,
+				"model", originalModel,
+				"mapped_model", mappedModel,
+				"elapsed_ms", time.Since(startTime).Milliseconds(),
+				"last_upstream_read_age_ms", time.Since(lastRead).Milliseconds(),
+				"stream_interval_seconds", int(streamInterval.Seconds()),
+				"keepalive_interval_seconds", int(keepaliveInterval.Seconds()),
+				"downstream_bytes", downstreamBytes,
+				"upstream_bytes", atomic.LoadInt64(&upstreamBytes),
+				"upstream_lines", atomic.LoadInt64(&upstreamLines),
+				"keepalive_sent", keepaliveSent,
+				"cf_ray", cfRay,
+			)
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				UpstreamRequestID:  upstreamRequestID,
+				Kind:               "stream_timeout",
+				Message:            "stream data interval timeout",
+				Detail: fmt.Sprintf("interval_seconds=%d last_read_age_ms=%d upstream_bytes=%d downstream_bytes=%d keepalive_sent=%d",
+					int(streamInterval.Seconds()), time.Since(lastRead).Milliseconds(), atomic.LoadInt64(&upstreamBytes), downstreamBytes, keepaliveSent),
+			})
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
@@ -1422,11 +1612,14 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			if _, err := fmt.Fprint(w, ":\n\n"); err != nil {
+			n, err := fmt.Fprint(w, ":\n\n")
+			if err != nil {
 				clientDisconnected = true
-				log.Printf("Client disconnected during streaming, continuing to drain upstream for billing")
+				logClientDisconnect(err)
 				continue
 			}
+			downstreamBytes += int64(n)
+			keepaliveSent++
 			flusher.Flush()
 		}
 	}
@@ -1486,7 +1679,7 @@ func (s *OpenAIGatewayService) correctToolCallsInResponseBody(body []byte) []byt
 	return body
 }
 
-func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
+func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) bool {
 	// Parse response.completed event for usage (OpenAI Responses format)
 	var event struct {
 		Type     string `json:"type"`
@@ -1505,7 +1698,9 @@ func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
 		usage.InputTokens = event.Response.Usage.InputTokens
 		usage.OutputTokens = event.Response.Usage.OutputTokens
 		usage.CacheReadInputTokens = event.Response.Usage.InputTokenDetails.CachedTokens
+		return true
 	}
+	return false
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*OpenAIUsage, error) {
