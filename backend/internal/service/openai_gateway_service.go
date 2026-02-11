@@ -1501,9 +1501,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				// If the stream ended but we never observed usage, record a lightweight ops marker to
 				// help debug "input=0 & output=0" cases.
 				//
-				// Only do this when we observed a completion marker ([DONE] or response.completed),
-				// otherwise upstream_eof_unexpected already records a clearer root cause.
-				if !clientDisconnected && usage.InputTokens == 0 && usage.OutputTokens == 0 && (sawDone || sawCompleted) {
+				// We log this when a completion marker was observed OR the client disconnected, so ops
+				// can inspect suspicious 200 responses with zero tokens.
+				if usage.InputTokens == 0 && usage.OutputTokens == 0 && (sawDone || sawCompleted || clientDisconnected) {
 					detail := map[string]any{
 						"kind":                        "zero_tokens",
 						"elapsed_ms":                  elapsedMs,
@@ -1522,6 +1522,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 						"stream_interval_seconds":     int(streamInterval.Seconds()),
 						"keepalive_interval_seconds":  int(keepaliveInterval.Seconds()),
 						"cf_ray":                      cfRay,
+						"client_disconnected":         clientDisconnected,
 					}
 					if b, err := json.Marshal(detail); err == nil {
 						SetOpsStreamFault(c, OpsStreamFault{
@@ -1557,6 +1558,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 						"stream_interval_seconds", int(streamInterval.Seconds()),
 						"keepalive_interval_seconds", int(keepaliveInterval.Seconds()),
 						"cf_ray", cfRay,
+						"client_disconnected", clientDisconnected,
 					)
 				}
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
@@ -1567,12 +1569,17 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					if !clientDisconnected {
 						elapsedMs := time.Since(startTime).Milliseconds()
-						if elapsedMs >= 60_000 {
+						shouldRecord := elapsedMs >= 60_000 || (usage.InputTokens == 0 && usage.OutputTokens == 0)
+						if shouldRecord {
+							totalTokens := usage.InputTokens + usage.OutputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
 							detail := map[string]any{
 								"kind":             "context_canceled",
 								"error":            ev.err.Error(),
 								"elapsed_ms":       elapsedMs,
 								"first_token_ms":   firstTokenMs,
+								"input_tokens":     usage.InputTokens,
+								"output_tokens":    usage.OutputTokens,
+								"total_tokens":     totalTokens,
 								"downstream_bytes": downstreamBytes,
 								"upstream_bytes":   atomic.LoadInt64(&upstreamBytes),
 								"upstream_lines":   atomic.LoadInt64(&upstreamLines),

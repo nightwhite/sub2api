@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores'
-import { opsAPI, type OpsErrorDetail, type OpsRequestDebugBundle, type OpsErrorLog } from '@/api/admin/ops'
+import { opsAPI, type OpsErrorDetail, type OpsRequestDebugBundle, type OpsErrorLog, type OpsRequestDump } from '@/api/admin/ops'
 import { formatDateTime } from '../utils/opsFormatters'
 
 interface Props {
@@ -23,6 +23,9 @@ const { copyToClipboard } = useClipboard()
 
 const loading = ref(false)
 const bundle = ref<OpsRequestDebugBundle | null>(null)
+
+const dumpLoading = ref(false)
+const dump = ref<OpsRequestDump | null>(null)
 
 const selectedErrorId = ref<number | null>(null)
 const selectedError = ref<OpsErrorDetail | null>(null)
@@ -51,6 +54,15 @@ function prettyJSON(raw?: string): string {
   }
 }
 
+function prettyObject(obj: any): string {
+  if (!obj) return 'N/A'
+  try {
+    return JSON.stringify(obj, null, 2)
+  } catch {
+    return String(obj)
+  }
+}
+
 async function fetchBundle() {
   const key = keyLabel.value
   if (!props.show || !key) return
@@ -63,6 +75,21 @@ async function fetchBundle() {
     bundle.value = null
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchDump() {
+  const key = keyLabel.value
+  if (!props.show || !key) return
+  dumpLoading.value = true
+  try {
+    const res = await opsAPI.getRequestDump(key)
+    dump.value = res?.dump || null
+  } catch (e: any) {
+    console.error('[OpsRequestDebugDrawer] Failed to fetch request dump', e)
+    dump.value = null
+  } finally {
+    dumpLoading.value = false
   }
 }
 
@@ -102,11 +129,13 @@ watch(
   (open) => {
     if (!open) {
       bundle.value = null
+      dump.value = null
       selectedErrorId.value = null
       selectedError.value = null
       return
     }
     fetchBundle()
+    fetchDump()
   }
 )
 
@@ -115,9 +144,11 @@ watch(
   () => {
     if (!props.show) return
     bundle.value = null
+    dump.value = null
     selectedErrorId.value = null
     selectedError.value = null
     fetchBundle()
+    fetchDump()
   }
 )
 </script>
@@ -128,7 +159,7 @@ watch(
       <div class="absolute inset-0 bg-black/40" @click="close"></div>
 
       <transition name="slide">
-        <aside class="absolute right-0 top-0 h-full w-full max-w-2xl overflow-hidden bg-white shadow-2xl dark:bg-dark-900">
+        <aside v-if="show" class="absolute right-0 top-0 h-full w-full max-w-2xl overflow-hidden bg-white shadow-2xl dark:bg-dark-900">
           <!-- Header -->
           <div class="flex items-start justify-between gap-3 border-b border-gray-200 p-4 dark:border-dark-700">
             <div class="min-w-0">
@@ -166,6 +197,60 @@ watch(
             </div>
 
             <div v-else class="space-y-6">
+              <!-- Request dump -->
+              <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/40">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">REQUEST DUMP</div>
+                  <div v-if="dumpLoading" class="text-xs text-gray-400">{{ t('common.loading') }}</div>
+                </div>
+
+                <div v-if="!dumpLoading && !dump" class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('common.noData') }}
+                </div>
+
+                <div v-else-if="dump" class="mt-3 space-y-3">
+                  <div class="grid grid-cols-2 gap-3 text-xs text-gray-600 dark:text-gray-300">
+                    <div>
+                      <span class="text-gray-400">Type:</span>
+                      <span class="ml-1 font-mono">{{ dump.dump_type || '-' }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-400">Status:</span>
+                      <span class="ml-1 font-mono">{{ dump.status_code ?? 0 }}</span>
+                    </div>
+                    <div class="col-span-2">
+                      <span class="text-gray-400">Path:</span>
+                      <span class="ml-1 font-mono break-all">{{ dump.request_path || '-' }}</span>
+                    </div>
+                    <div class="col-span-2">
+                      <span class="text-gray-400">Time:</span>
+                      <span class="ml-1 font-mono">{{ formatDateTime(dump.created_at) }}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="mb-1 text-[10px] font-bold text-gray-400">CLIENT HEADERS</div>
+                    <pre class="max-h-[220px] overflow-auto rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-100"><code>{{ prettyObject(dump.request_headers) }}</code></pre>
+                  </div>
+
+                  <div>
+                    <div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-bold text-gray-400">
+                      <span>CLIENT BODY</span>
+                      <span class="font-mono">{{ dump.request_body_bytes || 0 }} B</span>
+                    </div>
+                    <pre class="max-h-[320px] overflow-auto rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-100"><code>{{ dump.request_body || 'N/A' }}</code></pre>
+                  </div>
+
+                  <div>
+                    <div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-bold text-gray-400">
+                      <span>UPSTREAM BODY</span>
+                      <span class="font-mono">{{ dump.upstream_request_body_bytes || 0 }} B</span>
+                    </div>
+                    <pre class="max-h-[320px] overflow-auto rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-100"><code>{{ dump.upstream_request_body || 'N/A' }}</code></pre>
+                  </div>
+                </div>
+              </div>
+
               <!-- Usage summary -->
               <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/40">
                 <div class="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -312,4 +397,3 @@ watch(
   transform: translateX(100%);
 }
 </style>
-

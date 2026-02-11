@@ -158,6 +158,7 @@ func (s *OpsCleanupService) runScheduled() {
 
 type opsCleanupDeletedCounts struct {
 	errorLogs     int64
+	requestDumps  int64
 	retryAttempts int64
 	alertEvents   int64
 	systemMetrics int64
@@ -167,8 +168,9 @@ type opsCleanupDeletedCounts struct {
 
 func (c opsCleanupDeletedCounts) String() string {
 	return fmt.Sprintf(
-		"error_logs=%d retry_attempts=%d alert_events=%d system_metrics=%d hourly_preagg=%d daily_preagg=%d",
+		"error_logs=%d request_dumps=%d retry_attempts=%d alert_events=%d system_metrics=%d hourly_preagg=%d daily_preagg=%d",
 		c.errorLogs,
+		c.requestDumps,
 		c.retryAttempts,
 		c.alertEvents,
 		c.systemMetrics,
@@ -188,6 +190,7 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 	now := time.Now().UTC()
 
 	errorLogRetentionDays := s.cfg.Ops.Cleanup.ErrorLogRetentionDays
+	requestDumpRetentionDays := s.cfg.Ops.Cleanup.RequestDumpRetentionDays
 	minuteMetricsRetentionDays := s.cfg.Ops.Cleanup.MinuteMetricsRetentionDays
 	hourlyMetricsRetentionDays := s.cfg.Ops.Cleanup.HourlyMetricsRetentionDays
 
@@ -200,6 +203,7 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 				return out, nil
 			}
 			errorLogRetentionDays = settings.DataRetention.ErrorLogRetentionDays
+			requestDumpRetentionDays = settings.DataRetention.RequestDumpRetentionDays
 			minuteMetricsRetentionDays = settings.DataRetention.MinuteMetricsRetentionDays
 			hourlyMetricsRetentionDays = settings.DataRetention.HourlyMetricsRetentionDays
 		}
@@ -214,7 +218,21 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 		}
 		out.errorLogs = n
 
-		n, err = deleteOldRowsByID(ctx, s.db, "ops_retry_attempts", "created_at", cutoff, batchSize, false)
+		// Keep dumps lifecycle similar to error logs by default, but allow separate retention.
+	}
+
+	if requestDumpRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -requestDumpRetentionDays)
+		n, err := deleteOldRowsByID(ctx, s.db, "ops_request_dumps", "created_at", cutoff, batchSize, false)
+		if err != nil {
+			return out, err
+		}
+		out.requestDumps = n
+	}
+
+	if errorLogRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -errorLogRetentionDays)
+		n, err := deleteOldRowsByID(ctx, s.db, "ops_retry_attempts", "created_at", cutoff, batchSize, false)
 		if err != nil {
 			return out, err
 		}

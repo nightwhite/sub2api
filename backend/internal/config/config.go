@@ -463,6 +463,7 @@ type OpsCleanupConfig struct {
 	//
 	// vNext requirement: default 30 days across ops datasets.
 	ErrorLogRetentionDays      int `mapstructure:"error_log_retention_days"`
+	RequestDumpRetentionDays   int `mapstructure:"request_dump_retention_days"`
 	MinuteMetricsRetentionDays int `mapstructure:"minute_metrics_retention_days"`
 	HourlyMetricsRetentionDays int `mapstructure:"hourly_metrics_retention_days"`
 }
@@ -800,6 +801,7 @@ func setDefaults() {
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")
 	// Retention days: keep error logs shorter by default (debug-heavy), keep metrics longer.
 	viper.SetDefault("ops.cleanup.error_log_retention_days", 7)
+	viper.SetDefault("ops.cleanup.request_dump_retention_days", 7)
 	viper.SetDefault("ops.cleanup.minute_metrics_retention_days", 30)
 	viper.SetDefault("ops.cleanup.hourly_metrics_retention_days", 30)
 	viper.SetDefault("ops.aggregation.enabled", true)
@@ -1263,6 +1265,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")
+	}
+	if c.Ops.Cleanup.RequestDumpRetentionDays < 0 {
+		return fmt.Errorf("ops.cleanup.request_dump_retention_days must be non-negative")
 	}
 	if c.Ops.Cleanup.MinuteMetricsRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.minute_metrics_retention_days must be non-negative")

@@ -143,8 +143,11 @@ const validation = computed(() => {
 
   // 验证高级设置
   if (advancedSettings.value) {
-    const { error_log_retention_days, minute_metrics_retention_days, hourly_metrics_retention_days } = advancedSettings.value.data_retention
+    const { error_log_retention_days, request_dump_retention_days, minute_metrics_retention_days, hourly_metrics_retention_days } = advancedSettings.value.data_retention
     if (error_log_retention_days < 1 || error_log_retention_days > 365) {
+      errors.push(t('admin.ops.settings.validation.retentionDaysRange'))
+    }
+    if (request_dump_retention_days < 1 || request_dump_retention_days > 365) {
       errors.push(t('admin.ops.settings.validation.retentionDaysRange'))
     }
     if (minute_metrics_retention_days < 1 || minute_metrics_retention_days > 365) {
@@ -424,11 +427,21 @@ async function saveAllSettings() {
               <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.cleanupScheduleHint') }}</p>
             </div>
 
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
               <div>
                 <label class="input-label">{{ t('admin.ops.settings.errorLogRetentionDays') }}</label>
                 <input
                   v-model.number="advancedSettings.data_retention.error_log_retention_days"
+                  type="number"
+                  min="1"
+                  max="365"
+                  class="input"
+                />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.ops.settings.requestDumpRetentionDays') }}</label>
+                <input
+                  v-model.number="advancedSettings.data_retention.request_dump_retention_days"
                   type="number"
                   min="1"
                   max="365"

@@ -833,6 +833,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "ops.cleanup.error_log_retention_days",
 		},
 		{
+			name:    "ops cleanup request dump retention",
+			mutate:  func(c *Config) { c.Ops.Cleanup.RequestDumpRetentionDays = -1 },
+			wantErr: "ops.cleanup.request_dump_retention_days",
+		},
+		{
 			name:    "ops cleanup minute retention",
 			mutate:  func(c *Config) { c.Ops.Cleanup.MinuteMetricsRetentionDays = -1 },
 			wantErr: "ops.cleanup.minute_metrics_retention_days",

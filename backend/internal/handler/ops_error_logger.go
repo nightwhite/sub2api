@@ -31,6 +31,7 @@ const (
 const (
 	opsErrorLogTimeout      = 5 * time.Second
 	opsErrorLogDrainTimeout = 10 * time.Second
+	opsRequestDumpTimeout   = 30 * time.Second
 
 	opsErrorLogMinWorkerCount = 4
 	opsErrorLogMaxWorkerCount = 32
@@ -41,9 +42,12 @@ const (
 )
 
 type opsErrorLogJob struct {
-	ops         *service.OpsService
-	entry       *service.OpsInsertErrorLogInput
-	requestBody []byte
+	ops *service.OpsService
+
+	errorEntry       *service.OpsInsertErrorLogInput
+	errorRequestBody []byte
+
+	dumpEntry *service.OpsInsertRequestDumpInput
 }
 
 var (
@@ -84,7 +88,7 @@ func startOpsErrorLogWorkers() {
 			defer opsErrorLogWorkersWg.Done()
 			for job := range opsErrorLogQueue {
 				opsErrorLogQueueLen.Add(-1)
-				if job.ops == nil || job.entry == nil {
+				if job.ops == nil {
 					continue
 				}
 				func() {
@@ -93,9 +97,16 @@ func startOpsErrorLogWorkers() {
 							log.Printf("[OpsErrorLogger] worker panic: %v\n%s", r, debug.Stack())
 						}
 					}()
-					ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
-					_ = job.ops.RecordError(ctx, job.entry, job.requestBody)
-					cancel()
+					if job.errorEntry != nil {
+						ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
+						_ = job.ops.RecordError(ctx, job.errorEntry, job.errorRequestBody)
+						cancel()
+					}
+					if job.dumpEntry != nil {
+						ctx, cancel := context.WithTimeout(context.Background(), opsRequestDumpTimeout)
+						_ = job.ops.RecordRequestDump(ctx, job.dumpEntry)
+						cancel()
+					}
 					opsErrorLogProcessed.Add(1)
 				}()
 			}
@@ -103,8 +114,8 @@ func startOpsErrorLogWorkers() {
 	}
 }
 
-func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLogInput, requestBody []byte) {
-	if ops == nil || entry == nil {
+func enqueueOpsErrorLogJob(ops *service.OpsService, errorEntry *service.OpsInsertErrorLogInput, errorRequestBody []byte, dumpEntry *service.OpsInsertRequestDumpInput) {
+	if ops == nil || (errorEntry == nil && dumpEntry == nil) {
 		return
 	}
 	select {
@@ -129,7 +140,7 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 	}
 
 	select {
-	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, entry: entry, requestBody: requestBody}:
+	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, errorEntry: errorEntry, errorRequestBody: errorRequestBody, dumpEntry: dumpEntry}:
 		opsErrorLogQueueLen.Add(1)
 		opsErrorLogEnqueued.Add(1)
 	default:
@@ -267,6 +278,28 @@ func setOpsSelectedAccount(c *gin.Context, accountID int64) {
 		return
 	}
 	c.Set(opsAccountIDKey, accountID)
+}
+
+func extractOpsFullRequestHeaders(c *gin.Context) map[string][]string {
+	out := make(map[string][]string, 32)
+	if c == nil || c.Request == nil {
+		return out
+	}
+
+	for k, vv := range c.Request.Header {
+		if len(vv) == 0 {
+			continue
+		}
+		copied := make([]string, len(vv))
+		copy(copied, vv)
+		out[k] = copied
+	}
+
+	if host := strings.TrimSpace(c.Request.Host); host != "" {
+		out["Host"] = []string{host}
+	}
+
+	return out
 }
 
 type opsCaptureWriter struct {
@@ -478,7 +511,57 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 						}
 					}
 
-					enqueueOpsErrorLog(ops, entry, nil)
+					var requestBody []byte
+					if v, ok := c.Get(opsRequestBodyKey); ok {
+						if b, ok := v.([]byte); ok && len(b) > 0 {
+							requestBody = b
+						}
+					}
+					upstreamBody := ""
+					if v, ok := c.Get(service.OpsUpstreamRequestBodyKey); ok {
+						if s, ok := v.(string); ok {
+							upstreamBody = s
+						}
+					}
+
+					dumpEntry := &service.OpsInsertRequestDumpInput{
+						RequestID:       requestID,
+						ClientRequestID: clientRequestID,
+
+						UserID:    entry.UserID,
+						APIKeyID:  entry.APIKeyID,
+						AccountID: entry.AccountID,
+						GroupID:   entry.GroupID,
+						ClientIP:  entry.ClientIP,
+
+						Platform:    entry.Platform,
+						Model:       entry.Model,
+						RequestPath: entry.RequestPath,
+						Method: func() string {
+							if c.Request != nil {
+								return c.Request.Method
+							}
+							return ""
+						}(),
+						Stream:     entry.Stream,
+						StatusCode: code,
+						DumpType:   typ,
+
+						RequestHeaders:      extractOpsFullRequestHeaders(c),
+						RequestBody:         string(requestBody),
+						RequestBodyBytes:    len(requestBody),
+						UpstreamRequestBody: upstreamBody,
+						UpstreamRequestBodyBytes: func() int {
+							if upstreamBody == "" {
+								return 0
+							}
+							return len([]byte(upstreamBody))
+						}(),
+
+						CreatedAt: time.Now(),
+					}
+
+					enqueueOpsErrorLogJob(ops, entry, nil, dumpEntry)
 					return
 				}
 			}
@@ -710,7 +793,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 
-			enqueueOpsErrorLog(ops, entry, nil)
+			enqueueOpsErrorLogJob(ops, entry, nil, nil)
 			return
 		}
 
@@ -883,7 +966,52 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		// Do NOT store Authorization/Cookie/etc.
 		entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
 
-		enqueueOpsErrorLog(ops, entry, requestBody)
+		upstreamBody := ""
+		if v, ok := c.Get(service.OpsUpstreamRequestBodyKey); ok {
+			if s, ok := v.(string); ok {
+				upstreamBody = s
+			}
+		}
+
+		dumpEntry := &service.OpsInsertRequestDumpInput{
+			RequestID:       requestID,
+			ClientRequestID: clientRequestID,
+
+			UserID:    entry.UserID,
+			APIKeyID:  entry.APIKeyID,
+			AccountID: entry.AccountID,
+			GroupID:   entry.GroupID,
+			ClientIP:  entry.ClientIP,
+
+			Platform:    entry.Platform,
+			Model:       entry.Model,
+			RequestPath: entry.RequestPath,
+			Method: func() string {
+				if c.Request != nil {
+					return c.Request.Method
+				}
+				return ""
+			}(),
+			Stream:     entry.Stream,
+			StatusCode: status,
+			DumpType:   entry.ErrorType,
+
+			RequestHeaders:   extractOpsFullRequestHeaders(c),
+			RequestBody:      string(requestBody),
+			RequestBodyBytes: len(requestBody),
+
+			UpstreamRequestBody: upstreamBody,
+			UpstreamRequestBodyBytes: func() int {
+				if upstreamBody == "" {
+					return 0
+				}
+				return len([]byte(upstreamBody))
+			}(),
+
+			CreatedAt: time.Now(),
+		}
+
+		enqueueOpsErrorLogJob(ops, entry, requestBody, dumpEntry)
 	}
 }
 

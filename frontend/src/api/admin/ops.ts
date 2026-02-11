@@ -199,6 +199,40 @@ export interface OpsRequestDebugBundle {
   error_logs: OpsErrorLog[]
 }
 
+export interface OpsRequestDump {
+  id: number
+  created_at: string
+  dump_type: string
+
+  request_id: string
+  client_request_id: string
+
+  user_id?: number | null
+  api_key_id?: number | null
+  account_id?: number | null
+  group_id?: number | null
+  client_ip?: string | null
+
+  platform: string
+  model: string
+  request_path: string
+  method: string
+  stream: boolean
+  status_code: number
+
+  request_headers: Record<string, string[]>
+  request_headers_bytes: number
+  request_body: string
+  request_body_bytes: number
+  upstream_request_body: string
+  upstream_request_body_bytes: number
+}
+
+export interface OpsRequestDumpResponse {
+  key: string
+  dump: OpsRequestDump | null
+}
+
 export interface OpsRequestDetailsParams {
   time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
   start_time?: string
@@ -819,6 +853,7 @@ export interface OpsDataRetentionSettings {
   cleanup_enabled: boolean
   cleanup_schedule: string
   error_log_retention_days: number
+  request_dump_retention_days: number
   minute_metrics_retention_days: number
   hourly_metrics_retention_days: number
 }
@@ -1096,6 +1131,12 @@ export async function getRequestDebugBundle(key: string, params: { limit?: numbe
   return data
 }
 
+export async function getRequestDump(key: string): Promise<OpsRequestDumpResponse> {
+  const safeKey = encodeURIComponent(String(key || '').trim())
+  const { data } = await apiClient.get<OpsRequestDumpResponse>(`/admin/ops/requests/${safeKey}/dump`)
+  return data
+}
+
 // Alert rules
 export async function listAlertRules(): Promise<AlertRule[]> {
   const { data } = await apiClient.get<AlertRule[]>('/admin/ops/alert-rules')
@@ -1232,6 +1273,7 @@ export const opsAPI = {
 
   listRequestDetails,
   getRequestDebugBundle,
+  getRequestDump,
   listAlertRules,
   createAlertRule,
   updateAlertRule,

@@ -11,6 +11,8 @@ type OpsRepository interface {
 	GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLogDetail, error)
 	ListRequestDetails(ctx context.Context, filter *OpsRequestDetailFilter) ([]*OpsRequestDetail, int64, error)
 	GetRequestDebugBundle(ctx context.Context, key string, limit int) (*OpsRequestDebugBundle, error)
+	InsertRequestDump(ctx context.Context, input *OpsInsertRequestDumpInput) (int64, error)
+	GetRequestDumpByKey(ctx context.Context, key string) (*OpsRequestDump, error)
 
 	InsertRetryAttempt(ctx context.Context, input *OpsInsertRetryAttemptInput) (int64, error)
 	UpdateRetryAttempt(ctx context.Context, input *OpsUpdateRetryAttemptInput) error

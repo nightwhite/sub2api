@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -776,6 +777,42 @@ func (h *OpsHandler) GetRequestDebugBundle(c *gin.Context) {
 	}
 
 	response.Success(c, out)
+}
+
+type opsRequestDumpResponse struct {
+	Key  string                  `json:"key"`
+	Dump *service.OpsRequestDump `json:"dump"`
+}
+
+// GetRequestDump returns full request dump for a request key.
+// The key can be either request_id or client_request_id.
+// GET /api/v1/admin/ops/requests/:id/dump
+func (h *OpsHandler) GetRequestDump(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	key := strings.TrimSpace(c.Param("id"))
+	if key == "" {
+		response.BadRequest(c, "Invalid request id")
+		return
+	}
+
+	dump, err := h.opsService.GetRequestDumpByKey(c.Request.Context(), key)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.Success(c, opsRequestDumpResponse{Key: key, Dump: nil})
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Failed to load request dump")
+		return
+	}
+	response.Success(c, opsRequestDumpResponse{Key: key, Dump: dump})
 }
 
 type opsRetryRequest struct {
