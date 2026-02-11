@@ -4138,7 +4138,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
-	scanner := bufio.NewScanner(resp.Body)
+
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -4161,12 +4166,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			return false
 		}
 	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}

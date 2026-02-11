@@ -1225,7 +1225,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 	usage := &OpenAIUsage{}
 	var firstTokenMs *int
-	scanner := bufio.NewScanner(resp.Body)
+
+	// Track upstream read activity by bytes (not just completed lines) to avoid false idle timeouts
+	// when the upstream is slowly streaming a very long SSE line.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -1247,12 +1253,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			return false
 		}
 	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}

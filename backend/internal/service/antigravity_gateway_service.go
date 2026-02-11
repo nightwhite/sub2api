@@ -2781,7 +2781,11 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	}
 
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
-	scanner := bufio.NewScanner(resp.Body)
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -2805,12 +2809,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			return false
 		}
 	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -2934,7 +2935,11 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 // handleGeminiStreamToNonStreaming 读取上游流式响应，合并为非流式响应返回给客户端
 // Gemini 流式响应是增量的，需要累积所有 chunk 的内容
 func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Context, resp *http.Response, startTime time.Time) (*antigravityStreamResult, error) {
-	scanner := bufio.NewScanner(resp.Body)
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -2965,12 +2970,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 		}
 	}
 
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -3397,7 +3399,11 @@ func (s *AntigravityGatewayService) writeGoogleError(c *gin.Context, status int,
 // handleClaudeStreamToNonStreaming 收集上游流式响应，转换为 Claude 非流式格式返回
 // 用于处理客户端非流式请求但上游只支持流式的情况
 func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
-	scanner := bufio.NewScanner(resp.Body)
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -3426,12 +3432,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 		}
 	}
 
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -3581,7 +3584,11 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 	processor := antigravity.NewStreamingProcessor(originalModel)
 	var firstTokenMs *int
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
-	scanner := bufio.NewScanner(resp.Body)
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -3616,12 +3623,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			return false
 		}
 	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -3988,7 +3992,11 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 
-	scanner := bufio.NewScanner(resp.Body)
+	// Track upstream read activity by bytes to avoid false idle timeouts on very long SSE lines.
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+
+	scanner := bufio.NewScanner(upstreamReadTracker{r: resp.Body, lastReadAt: &lastReadAt})
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -4009,12 +4017,9 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			return false
 		}
 	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
-			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}

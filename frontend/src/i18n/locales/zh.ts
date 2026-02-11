@@ -3487,7 +3487,7 @@ export default {
         enabled: '启用流超时处理',
         enabledHint: '当上游响应超时时，自动处理问题账户',
         timeoutSeconds: '超时阈值（秒）',
-        timeoutSecondsHint: '流数据间隔超过此时间视为超时（30-300秒）',
+        timeoutSecondsHint: '流数据间隔超过此时间视为超时（30-3600秒）',
         action: '处理方式',
         actionTempUnsched: '临时不可调度',
         actionError: '标记为错误状态',

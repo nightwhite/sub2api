@@ -3313,7 +3313,7 @@ export default {
         enabled: 'Enable Stream Timeout Handling',
         enabledHint: 'Automatically handle problematic accounts when upstream times out',
         timeoutSeconds: 'Timeout Threshold (seconds)',
-        timeoutSecondsHint: 'Stream data interval exceeding this time is considered timeout (30-300s)',
+        timeoutSecondsHint: 'Stream data interval exceeding this time is considered timeout (30-3600s)',
         action: 'Action',
         actionTempUnsched: 'Temporarily Unschedulable',
         actionError: 'Mark as Error',
