@@ -459,21 +459,16 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 						entry.ClientIP = &clientIP
 					}
 
-					var requestBody []byte
-					if v, ok := c.Get(opsRequestBodyKey); ok {
-						if b, ok := v.([]byte); ok && len(b) > 0 {
-							requestBody = b
-						}
-					}
 					// Do NOT store full request bodies for streaming faults:
 					// - prompts can be extremely large
 					// - this path is for troubleshooting markers, not retry execution
 					// Keep only body size as a hint.
-					if len(requestBody) > 0 {
-						bytesLen := len(requestBody)
-						entry.RequestBodyBytes = &bytesLen
-						entry.RequestBodyTruncated = true
-						requestBody = nil
+					if v, ok := c.Get(opsRequestBodyKey); ok {
+						if b, ok := v.([]byte); ok && len(b) > 0 {
+							bytesLen := len(b)
+							entry.RequestBodyBytes = &bytesLen
+							entry.RequestBodyTruncated = true
+						}
 					}
 					entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
 
@@ -697,19 +692,14 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				entry.ClientIP = &clientIP
 			}
 
-			var requestBody []byte
-			if v, ok := c.Get(opsRequestBodyKey); ok {
-				if b, ok := v.([]byte); ok && len(b) > 0 {
-					requestBody = b
-				}
-			}
 			// For recovered upstream errors (status<400), avoid storing full request bodies.
 			// Keep only body size for troubleshooting.
-			if len(requestBody) > 0 {
-				bytesLen := len(requestBody)
-				entry.RequestBodyBytes = &bytesLen
-				entry.RequestBodyTruncated = true
-				requestBody = nil
+			if v, ok := c.Get(opsRequestBodyKey); ok {
+				if b, ok := v.([]byte); ok && len(b) > 0 {
+					bytesLen := len(b)
+					entry.RequestBodyBytes = &bytesLen
+					entry.RequestBodyTruncated = true
+				}
 			}
 			entry.RequestHeadersJSON = extractOpsRetryRequestHeaders(c)
 
