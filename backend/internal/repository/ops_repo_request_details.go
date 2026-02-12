@@ -37,6 +37,13 @@ func (r *opsRepository) ListRequestDetails(ctx context.Context, filter *service.
 			addCondition(fmt.Sprintf("kind = $%d", len(args)+1), kind)
 		}
 
+		if filter.ProblemOnly {
+			// Failed requests (error rows) OR suspicious success rows with zero tokens.
+			addCondition("(kind = 'error' OR (kind = 'success' AND total_tokens = 0))")
+		} else if filter.ZeroTokensOnly {
+			addCondition("(kind = 'success' AND total_tokens = 0)")
+		}
+
 		if platform := strings.TrimSpace(strings.ToLower(filter.Platform)); platform != "" {
 			addCondition(fmt.Sprintf("platform = $%d", len(args)+1), platform)
 		}

@@ -239,6 +239,8 @@ export interface OpsRequestDetailsParams {
   end_time?: string
 
   kind?: OpsRequestDetailsKind
+  problem_only?: boolean
+  zero_tokens_only?: boolean
 
   platform?: string
   group_id?: number | null

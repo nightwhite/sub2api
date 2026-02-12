@@ -2730,6 +2730,13 @@ export default {
         rangeLabel: 'Window: {range}',
         rangeMinutes: '{n} minutes',
         rangeHours: '{n} hours',
+        view: {
+          problem: 'Problem',
+          failed: 'Failed',
+          zeroTokens: '0 Tokens',
+          all: 'All'
+        },
+        viewHint: 'Quick filter: failed + zero tokens',
         empty: 'No requests in this window.',
         emptyHint: 'Try a different time range or remove filters.',
         failedToLoad: 'Failed to load request details',

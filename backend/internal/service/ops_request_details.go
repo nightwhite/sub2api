@@ -53,6 +53,14 @@ type OpsRequestDetailFilter struct {
 
 	// kind: success|error|all
 	Kind string
+	// ProblemOnly filters to "failed requests OR zero-token successes".
+	//
+	// Semantics:
+	// - error rows: always included (status_code>=400)
+	// - success rows: included only when total_tokens=0
+	ProblemOnly bool
+	// ZeroTokensOnly filters to success rows with total_tokens=0.
+	ZeroTokensOnly bool
 
 	Platform string
 	GroupID  *int64

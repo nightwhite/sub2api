@@ -41,6 +41,9 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 
+type RequestDetailsView = 'problem' | 'all' | 'failed' | 'zero'
+const viewMode = ref<RequestDetailsView>('problem')
+
 const close = () => {
   showDebugDrawer.value = false
   debugRequestKey.value = null
@@ -70,11 +73,20 @@ const fetchData = async () => {
   if (!props.modelValue) return
   loading.value = true
   try {
+    const mode = viewMode.value
+    const kind = mode === 'failed'
+      ? 'error'
+      : mode === 'zero'
+        ? 'success'
+        : mode === 'problem'
+          ? 'all'
+          : (props.preset.kind ?? 'all')
+
     const params: OpsRequestDetailsParams = {
       ...buildTimeParams(),
       page: page.value,
       page_size: pageSize.value,
-      kind: props.preset.kind ?? 'all',
+      kind,
       sort: props.preset.sort ?? 'created_at_desc'
     }
 
@@ -84,6 +96,9 @@ const fetchData = async () => {
 
     if (typeof props.preset.min_duration_ms === 'number') params.min_duration_ms = props.preset.min_duration_ms
     if (typeof props.preset.max_duration_ms === 'number') params.max_duration_ms = props.preset.max_duration_ms
+
+    if (mode === 'problem') params.problem_only = true
+    if (mode === 'zero') params.zero_tokens_only = true
 
     const res = await opsAPI.listRequestDetails(params)
     items.value = res.items || []
@@ -104,6 +119,7 @@ watch(
     if (open) {
       page.value = 1
       pageSize.value = 10
+      viewMode.value = 'problem'
       fetchData()
     }
   }
@@ -117,7 +133,8 @@ watch(
     props.preset.kind,
     props.preset.sort,
     props.preset.min_duration_ms,
-    props.preset.max_duration_ms
+    props.preset.max_duration_ms,
+    viewMode.value
   ],
   () => {
     if (!props.modelValue) return
@@ -161,23 +178,69 @@ const kindBadgeClass = (kind: string) => {
   if (kind === 'error') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
   return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
 }
+
+const viewButtonClass = (active: boolean) => {
+  return active
+    ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-800 dark:text-white'
+    : 'bg-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+}
 </script>
 
 <template>
   <BaseDialog :show="modelValue" :title="props.preset.title || t('admin.ops.requestDetails.title')" width="full" @close="close">
     <template #default>
       <div class="flex h-full min-h-0 flex-col">
-        <div class="mb-4 flex flex-shrink-0 items-center justify-between">
-          <div class="text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.ops.requestDetails.rangeLabel', { range: rangeLabel }) }}
+        <div class="mb-4 flex flex-shrink-0 flex-col gap-3 border-b border-gray-200 pb-4 dark:border-dark-700">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.ops.requestDetails.rangeLabel', { range: rangeLabel }) }}
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" @click="fetchData">
+              {{ t('common.refresh') }}
+            </button>
           </div>
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            @click="fetchData"
-          >
-            {{ t('common.refresh') }}
-          </button>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
+              <div class="flex items-center gap-1">
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
+                  :class="viewButtonClass(viewMode === 'problem')"
+                  @click="viewMode = 'problem'"
+                >
+                  {{ t('admin.ops.requestDetails.view.problem') }}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
+                  :class="viewButtonClass(viewMode === 'failed')"
+                  @click="viewMode = 'failed'"
+                >
+                  {{ t('admin.ops.requestDetails.view.failed') }}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
+                  :class="viewButtonClass(viewMode === 'zero')"
+                  @click="viewMode = 'zero'"
+                >
+                  {{ t('admin.ops.requestDetails.view.zeroTokens') }}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
+                  :class="viewButtonClass(viewMode === 'all')"
+                  @click="viewMode = 'all'"
+                >
+                  {{ t('admin.ops.requestDetails.view.all') }}
+                </button>
+              </div>
+            </div>
+            <div class="text-[11px] text-gray-400 dark:text-gray-500">
+              {{ t('admin.ops.requestDetails.viewHint') }}
+            </div>
+          </div>
         </div>
 
         <!-- Loading -->

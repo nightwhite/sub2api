@@ -2901,6 +2901,13 @@ export default {
         rangeLabel: '窗口：{range}',
         rangeMinutes: '{n} 分钟',
         rangeHours: '{n} 小时',
+        view: {
+          problem: '问题',
+          failed: '失败',
+          zeroTokens: '0 Tokens',
+          all: '全部'
+        },
+        viewHint: '快速筛：失败请求 + 0 tokens',
         empty: '该窗口内暂无请求。',
         emptyHint: '可尝试调整时间范围或取消部分筛选。',
         failedToLoad: '加载请求明细失败',

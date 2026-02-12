@@ -72,6 +72,15 @@ func parseOpsViewParam(c *gin.Context) string {
 	}
 }
 
+func parseBoolQuery(v string) bool {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func NewOpsHandler(opsService *service.OpsService) *OpsHandler {
 	return &OpsHandler{opsService: opsService}
 }
@@ -643,6 +652,8 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.Sort = strings.TrimSpace(c.Query("sort"))
+	filter.ProblemOnly = parseBoolQuery(c.Query("problem_only"))
+	filter.ZeroTokensOnly = parseBoolQuery(c.Query("zero_tokens_only"))
 
 	if v := strings.TrimSpace(c.Query("user_id")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
