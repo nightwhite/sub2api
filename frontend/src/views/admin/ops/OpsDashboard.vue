@@ -114,7 +114,7 @@
           :preset="requestDetailsPreset"
           :platform="platform"
           :group-id="groupId"
-          @openErrorDetail="openError"
+          @openErrorDetail="openErrorFromRequestDetails"
         />
       </template>
     </div>
@@ -486,6 +486,13 @@ function openError(id: number) {
   // Ensure only one modal visible at a time.
   showErrorDetails.value = false
   showRequestDetails.value = false
+  showErrorModal.value = true
+}
+
+function openErrorFromRequestDetails(id: number) {
+  selectedErrorId.value = id
+  // Keep request details visible so ops can quickly go back after inspecting an error.
+  showErrorDetails.value = false
   showErrorModal.value = true
 }
 

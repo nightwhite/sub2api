@@ -163,7 +163,6 @@ async function handleCopyRequestId(requestId: string) {
 
 function openErrorDetail(errorId: number | null | undefined) {
   if (!errorId) return
-  close()
   emit('openErrorDetail', errorId)
 }
 

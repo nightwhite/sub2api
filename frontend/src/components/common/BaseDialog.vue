@@ -44,10 +44,21 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
+import { bringDialogToFront, isTopDialog, removeDialog } from './baseDialogManager'
 
-// 生成唯一ID以避免多个对话框时ID冲突
-let dialogIdCounter = 0
-const dialogId = `modal-title-${++dialogIdCounter}`
+function createDialogKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    // ignore
+  }
+  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+}
+
+const instanceKey = `base-dialog-${createDialogKey()}`
+const dialogId = `modal-title-${instanceKey}`
 
 // 焦点管理
 const dialogRef = ref<HTMLElement | null>(null)
@@ -103,7 +114,7 @@ const handleClose = () => {
 }
 
 const handleEscape = (event: KeyboardEvent) => {
-  if (props.show && props.closeOnEscape && event.key === 'Escape') {
+  if (props.show && props.closeOnEscape && event.key === 'Escape' && isTopDialog(instanceKey)) {
     emit('close')
   }
 }
@@ -113,10 +124,12 @@ watch(
   () => props.show,
   async (isOpen) => {
     if (isOpen) {
-      // 保存当前焦点元素
-      previousActiveElement = document.activeElement as HTMLElement
-      // 使用CSS类而不是直接操作style,更易于管理多个对话框
-      document.body.classList.add('modal-open')
+      // Save current focus element.
+      if (typeof document !== 'undefined') {
+        previousActiveElement = document.activeElement as HTMLElement
+      }
+      // Register this dialog as top-most and keep body scroll locked while any dialog is open.
+      bringDialogToFront(instanceKey)
 
       // 等待DOM更新后设置焦点到对话框
       await nextTick()
@@ -127,7 +140,7 @@ watch(
         firstFocusable?.focus()
       }
     } else {
-      document.body.classList.remove('modal-open')
+      removeDialog(instanceKey)
       // 恢复之前的焦点
       if (previousActiveElement && typeof previousActiveElement.focus === 'function') {
         previousActiveElement.focus()
@@ -144,7 +157,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
-  // 确保组件卸载时移除滚动锁定
-  document.body.classList.remove('modal-open')
+  // Ensure we don't leak the dialog in the global stack.
+  removeDialog(instanceKey)
 })
 </script>
