@@ -52,8 +52,10 @@ func (s *OpenAIGatewayService) Compact(ctx context.Context, c *gin.Context, acco
 		requestPath = "/v1/responses/compact"
 	}
 
-	// Force non-streaming output for compact endpoint.
-	reqBody["stream"] = false
+	// Compact endpoint returns JSON to the client. For OAuth upstream (ChatGPT internal API),
+	// we must request stream=true and convert SSE to JSON server-side.
+	wantUpstreamStream := account != nil && account.Type == AccountTypeOAuth
+	reqBody["stream"] = wantUpstreamStream
 
 	// For non-/responses/compact-supporting upstreams (notably OAuth), we need an instructions string
 	// to actually "compact" the history.
@@ -168,13 +170,11 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 	isCodexCLI := openai.IsCodexCLIRequest(userAgent)
 	isCompaction := strings.Contains(requestPath, "/responses/compact")
 
-	// Force non-streaming JSON output for compact endpoint.
-	if reqStream {
-		reqBody["stream"] = false
-		reqStream = false
-		bodyModified = true
-	} else if _, ok := reqBody["stream"].(bool); !ok {
-		reqBody["stream"] = false
+	// Compact endpoint returns JSON to the client. For OAuth upstream, stream must be true.
+	wantUpstreamStream := account != nil && account.Type == AccountTypeOAuth
+	if v, ok := reqBody["stream"].(bool); !ok || v != wantUpstreamStream {
+		reqBody["stream"] = wantUpstreamStream
+		reqStream = wantUpstreamStream
 		bodyModified = true
 	}
 
