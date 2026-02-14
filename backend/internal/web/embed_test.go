@@ -358,15 +358,16 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		apiPaths := []string{
-			"/api/v1/users",
-			"/v1/models",
-			"/v1beta/chat",
-			"/antigravity/test",
-			"/setup/init",
-			"/health",
-			"/responses",
-		}
+			apiPaths := []string{
+				"/api/v1/users",
+				"/v1/models",
+				"/v1beta/chat",
+				"/antigravity/test",
+				"/setup/init",
+				"/health",
+				"/responses",
+				"/responses/compact",
+			}
 
 		for _, path := range apiPaths {
 			t.Run(path, func(t *testing.T) {
@@ -533,15 +534,16 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	t.Run("skips_api_routes", func(t *testing.T) {
 		middleware := ServeEmbeddedFrontend()
 
-		apiPaths := []string{
-			"/api/users",
-			"/v1/models",
-			"/v1beta/chat",
-			"/antigravity/test",
-			"/setup/init",
-			"/health",
-			"/responses",
-		}
+			apiPaths := []string{
+				"/api/users",
+				"/v1/models",
+				"/v1beta/chat",
+				"/antigravity/test",
+				"/setup/init",
+				"/health",
+				"/responses",
+				"/responses/compact",
+			}
 
 		for _, path := range apiPaths {
 			t.Run(path, func(t *testing.T) {

@@ -81,6 +81,7 @@ temp/
 
 # Local reference repos / scratch space (not part of the product)
 .reference/
+helloagents/
 *.tmp
 *.temp
 *.log

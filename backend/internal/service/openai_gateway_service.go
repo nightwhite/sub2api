@@ -1011,6 +1011,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	requestPath := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	isCompact := strings.Contains(requestPath, "/responses/compact")
+
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1021,13 +1027,23 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL == "" {
-			targetURL = openaiPlatformAPIURL
+			// OpenAI platform base URL already contains "/v1/responses".
+			// When the client calls "/responses/compact", forward to "/v1/responses/compact".
+			if isCompact {
+				targetURL = openaiPlatformAPIURL + "/compact"
+			} else {
+				targetURL = openaiPlatformAPIURL
+			}
 		} else {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
 				return nil, err
 			}
-			targetURL = validatedURL + "/responses"
+			if isCompact {
+				targetURL = validatedURL + "/responses/compact"
+			} else {
+				targetURL = validatedURL + "/responses"
+			}
 		}
 	default:
 		targetURL = openaiPlatformAPIURL
