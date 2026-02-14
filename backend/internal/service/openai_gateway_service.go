@@ -764,7 +764,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	bodyModified := false
 	originalModel := reqModel
 
+	requestPath := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
 	isCodexCLI := openai.IsCodexCLIRequest(c.GetHeader("User-Agent"))
+	isCompaction := strings.Contains(requestPath, "/responses/compact")
 
 	// 对所有请求执行模型映射（包含 Codex CLI）。
 	mappedModel := account.GetMappedModel(reqModel)
@@ -795,8 +800,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	// Expand /responses/compact tokens into instructions for OAuth accounts (ChatGPT internal API does not understand them).
 	if account.Type == AccountTypeOAuth {
-		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI)
+		if changed, err := s.expandCompactionIntoInstructions(reqBody); err != nil {
+			if c != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": gin.H{
+						"type":    "invalid_request_error",
+						"message": err.Error(),
+					},
+				})
+			}
+			return nil, err
+		} else if changed {
+			bodyModified = true
+		}
+	}
+
+	if account.Type == AccountTypeOAuth {
+		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI, isCompaction)
 		if codexResult.Modified {
 			bodyModified = true
 		}
@@ -870,7 +892,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	// Build upstream request
-	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, requestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,10 +1032,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}, nil
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
-	requestPath := ""
-	if c != nil && c.Request != nil && c.Request.URL != nil {
-		requestPath = c.Request.URL.Path
+func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, requestPath string) (*http.Request, error) {
+	if requestPath == "" {
+		if c != nil && c.Request != nil && c.Request.URL != nil {
+			requestPath = c.Request.URL.Path
+		}
 	}
 	isCompact := strings.Contains(requestPath, "/responses/compact")
 

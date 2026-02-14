@@ -83,7 +83,7 @@ type opencodeCacheMetadata struct {
 	LastChecked int64  `json:"lastChecked"`
 }
 
-func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTransformResult {
+func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompaction bool) codexTransformResult {
 	result := codexTransformResult{}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
 	needsToolContinuation := NeedsToolContinuation(reqBody)
@@ -107,9 +107,17 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTran
 		reqBody["store"] = false
 		result.Modified = true
 	}
-	if v, ok := reqBody["stream"].(bool); !ok || !v {
-		reqBody["stream"] = true
-		result.Modified = true
+	// 默认强制 stream=true（Codex internal API 更稳定且便于收集 usage），但 compact 端点需要 JSON 输出。
+	if isCompaction {
+		if _, ok := reqBody["stream"].(bool); !ok {
+			reqBody["stream"] = false
+			result.Modified = true
+		}
+	} else {
+		if v, ok := reqBody["stream"].(bool); !ok || !v {
+			reqBody["stream"] = true
+			result.Modified = true
+		}
 	}
 
 	if _, ok := reqBody["max_output_tokens"]; ok {
@@ -307,18 +315,19 @@ func applyCodexCLIInstructions(reqBody map[string]any) bool {
 }
 
 // applyOpenCodeInstructions 为非 Codex CLI 请求应用 opencode 指令
-// 优先使用 opencode 指令覆盖
+// 仅在 instructions 为空时补充，避免覆盖用户显式提供的 instructions。
 func applyOpenCodeInstructions(reqBody map[string]any) bool {
-	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
-	existingInstructions, _ := reqBody["instructions"].(string)
-	existingInstructions = strings.TrimSpace(existingInstructions)
+	if !isInstructionsEmpty(reqBody) {
+		return false
+	}
 
+	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
 	if instructions != "" {
-		if existingInstructions != instructions {
-			reqBody["instructions"] = instructions
-			return true
-		}
-	} else if existingInstructions == "" {
+		reqBody["instructions"] = instructions
+		return true
+	}
+
+	if instructions == "" {
 		codexInstructions := strings.TrimSpace(getCodexCLIInstructions())
 		if codexInstructions != "" {
 			reqBody["instructions"] = codexInstructions
