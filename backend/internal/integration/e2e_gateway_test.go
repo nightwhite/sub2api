@@ -21,8 +21,10 @@ var (
 	// - "" (默认): 使用 /v1/messages, /v1beta/models（混合模式，可调度 antigravity 账户）
 	// - "/antigravity": 使用 /antigravity/v1/messages, /antigravity/v1beta/models（非混合模式，仅 antigravity 账户）
 	endpointPrefix = getEnv("ENDPOINT_PREFIX", "")
-	claudeAPIKey   = "sk-8e572bc3b3de92ace4f41f4256c28600ca11805732a7b693b5c44741346bbbb3"
-	geminiAPIKey   = "sk-5950197a2085b38bbe5a1b229cc02b8ece914963fc44cacc06d497ae8b87410f"
+	// E2E_*_API_KEY: 用于本地/测试环境的 Sub2API API Key。
+	// 默认值是占位符，实际跑 e2e 时请通过环境变量传入真实可用的 key。
+	claudeAPIKey = getEnv("E2E_CLAUDE_API_KEY", "e2e-claude-api-key")
+	geminiAPIKey = getEnv("E2E_GEMINI_API_KEY", "e2e-gemini-api-key")
 	testInterval   = 1 * time.Second // 测试间隔，防止限流
 )
 

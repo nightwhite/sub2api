@@ -20,12 +20,12 @@ func cliValidateHostname(host string) bool {
 }
 
 func cliValidateDBName(name string) bool {
-	validName := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
+	validName := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 	return validName.MatchString(name) && len(name) <= 63
 }
 
 func cliValidateUsername(name string) bool {
-	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	validName := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 	return validName.MatchString(name) && len(name) <= 63
 }
 
@@ -90,7 +90,7 @@ func RunCLI() error {
 		if cliValidateUsername(cfg.Database.User) {
 			break
 		}
-		fmt.Println("  Invalid username. Use alphanumeric and underscores only.")
+		fmt.Println("  Invalid username. Use alphanumeric, underscores, and hyphens only.")
 	}
 
 	cfg.Database.Password = promptPassword("PostgreSQL Password")
@@ -100,7 +100,7 @@ func RunCLI() error {
 		if cliValidateDBName(cfg.Database.DBName) {
 			break
 		}
-		fmt.Println("  Invalid database name. Start with letter, use alphanumeric and underscores.")
+		fmt.Println("  Invalid database name. Start with letter, use alphanumeric, underscores, and hyphens.")
 	}
 
 	for {

@@ -1309,7 +1309,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		return nil, s.writeClaudeError(c, http.StatusForbidden, "permission_error", fmt.Sprintf("model %s not in whitelist", claudeReq.Model))
 	}
 	// 应用 thinking 模式自动后缀：如果 thinking 开启且目标是 claude-sonnet-4-5，自动改为 thinking 版本
-	thinkingEnabled := claudeReq.Thinking != nil && claudeReq.Thinking.Type == "enabled"
+	thinkingEnabled := claudeReq.Thinking != nil && (claudeReq.Thinking.Type == "enabled" || claudeReq.Thinking.Type == "adaptive")
 	mappedModel = applyThinkingModelSuffix(mappedModel, thinkingEnabled)
 
 	// 获取 access_token
@@ -4116,6 +4116,15 @@ func (s *AntigravityGatewayService) extractSSEUsage(line string, usage *ClaudeUs
 	if v, ok := u["cache_creation_input_tokens"].(float64); ok && int(v) > 0 {
 		usage.CacheCreationInputTokens = int(v)
 	}
+	// 解析嵌套的 cache_creation 对象中的 5m/1h 明细
+	if cc, ok := u["cache_creation"].(map[string]any); ok {
+		if v, ok := cc["ephemeral_5m_input_tokens"].(float64); ok {
+			usage.CacheCreation5mTokens = int(v)
+		}
+		if v, ok := cc["ephemeral_1h_input_tokens"].(float64); ok {
+			usage.CacheCreation1hTokens = int(v)
+		}
+	}
 }
 
 // extractClaudeUsage 从非流式 Claude 响应提取 usage
@@ -4137,6 +4146,15 @@ func (s *AntigravityGatewayService) extractClaudeUsage(body []byte) *ClaudeUsage
 		}
 		if v, ok := u["cache_creation_input_tokens"].(float64); ok {
 			usage.CacheCreationInputTokens = int(v)
+		}
+		// 解析嵌套的 cache_creation 对象中的 5m/1h 明细
+		if cc, ok := u["cache_creation"].(map[string]any); ok {
+			if v, ok := cc["ephemeral_5m_input_tokens"].(float64); ok {
+				usage.CacheCreation5mTokens = int(v)
+			}
+			if v, ok := cc["ephemeral_1h_input_tokens"].(float64); ok {
+				usage.CacheCreation1hTokens = int(v)
+			}
 		}
 	}
 	return usage
