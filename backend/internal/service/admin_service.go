@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -290,6 +291,18 @@ type ProxyExitInfo struct {
 // ProxyExitInfoProber tests proxy connectivity and retrieves exit information
 type ProxyExitInfoProber interface {
 	ProbeProxy(ctx context.Context, proxyURL string) (*ProxyExitInfo, int64, error)
+}
+
+var proxyURLAuthRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@`)
+var proxyURLUserOnlyRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s]+)@`)
+
+func sanitizeProxyErrorMessage(msg string) string {
+	if msg == "" {
+		return msg
+	}
+	msg = proxyURLAuthRe.ReplaceAllString(msg, `$1$2:***@`)
+	msg = proxyURLUserOnlyRe.ReplaceAllString(msg, `$1***@`)
+	return msg
 }
 
 // adminServiceImpl implements AdminService
@@ -1594,14 +1607,15 @@ func (s *adminServiceImpl) TestProxy(ctx context.Context, id int64) (*ProxyTestR
 	proxyURL := proxy.URL()
 	exitInfo, latencyMs, err := s.proxyProber.ProbeProxy(ctx, proxyURL)
 	if err != nil {
+		errMsg := sanitizeProxyErrorMessage(err.Error())
 		s.saveProxyLatency(ctx, id, &ProxyLatencyInfo{
 			Success:   false,
-			Message:   err.Error(),
+			Message:   errMsg,
 			UpdatedAt: time.Now(),
 		})
 		return &ProxyTestResult{
 			Success: false,
-			Message: err.Error(),
+			Message: errMsg,
 		}, nil
 	}
 
@@ -1635,9 +1649,10 @@ func (s *adminServiceImpl) probeProxyLatency(ctx context.Context, proxy *Proxy) 
 	}
 	exitInfo, latencyMs, err := s.proxyProber.ProbeProxy(ctx, proxy.URL())
 	if err != nil {
+		errMsg := sanitizeProxyErrorMessage(err.Error())
 		s.saveProxyLatency(ctx, proxy.ID, &ProxyLatencyInfo{
 			Success:   false,
-			Message:   err.Error(),
+			Message:   errMsg,
 			UpdatedAt: time.Now(),
 		})
 		return

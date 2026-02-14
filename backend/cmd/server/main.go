@@ -93,8 +93,9 @@ func main() {
 			// Continue to main server after auto-setup
 		} else {
 			log.Println("First run detected, starting setup wizard...")
-			runSetupServer()
-			return
+			if err := runSetupServerUntilInstalled(); err != nil {
+				log.Fatalf("Failed to start setup server: %v", err)
+			}
 		}
 	}
 
@@ -102,7 +103,7 @@ func main() {
 	runMainServer()
 }
 
-func runSetupServer() {
+func runSetupServerUntilInstalled() error {
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS(config.CORSConfig{}))
@@ -122,8 +123,34 @@ func runSetupServer() {
 	log.Printf("Setup wizard available at http://%s", addr)
 	log.Println("Complete the setup wizard to configure Sub2API")
 
-	if err := r.Run(addr); err != nil {
-		log.Fatalf("Failed to start setup server: %v", err)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-errCh:
+			return err
+		case <-ticker.C:
+			if !setup.NeedsSetup() {
+				log.Println("Setup completed, switching to main server...")
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = srv.Shutdown(ctx)
+				return nil
+			}
+		}
 	}
 }
 

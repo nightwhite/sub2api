@@ -7,6 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,20 +41,74 @@ const (
 	defaultProxyProbeTimeout = 30 * time.Second
 )
 
-// probeURLs 按优先级排列的探测 URL 列表
-// 某些 AI API 专用代理只允许访问特定域名，因此需要多个备选
-var probeURLs = []struct {
+type probeTarget struct {
 	url    string
 	parser string // "ip-api" or "httpbin"
-}{
-	{"http://ip-api.com/json/?lang=zh-CN", "ip-api"},
-	{"http://httpbin.org/ip", "httpbin"},
 }
 
 type proxyProbeService struct {
 	insecureSkipVerify bool
 	allowPrivateHosts  bool
 	validateResolvedIP bool
+}
+
+var authInURLRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@`)
+
+func sanitizeErrorText(s string) string {
+	if s == "" {
+		return s
+	}
+	// Best-effort redaction for any embedded URL credentials to avoid leaking secrets.
+	return authInURLRe.ReplaceAllString(s, `$1$2:***@`)
+}
+
+func defaultProbeTargets() []probeTarget {
+	// probeURLs 按优先级排列的探测 URL 列表
+	// 某些 AI API 专用代理只允许访问特定域名/端口，因此需要多个备选（含 HTTPS 版本）
+	return []probeTarget{
+		{"https://httpbin.org/ip", "httpbin"},
+		{"https://api.ipify.org?format=json", "ipify"},
+		{"http://ip-api.com/json/?lang=zh-CN", "ip-api"},
+		{"http://httpbin.org/ip", "httpbin"},
+	}
+}
+
+func probeTargetsFromEnv() []probeTarget {
+	raw := strings.TrimSpace(os.Getenv("SUB2API_PROXY_PROBE_URLS"))
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]probeTarget, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		u, err := url.Parse(part)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			continue
+		}
+
+		host := strings.ToLower(u.Hostname())
+		parser := "status"
+		switch {
+		case strings.Contains(host, "ip-api.com"):
+			parser = "ip-api"
+		case strings.Contains(host, "httpbin.org"):
+			parser = "httpbin"
+		case strings.Contains(host, "ipify.org"):
+			parser = "ipify"
+		}
+
+		out = append(out, probeTarget{url: part, parser: parser})
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (s *proxyProbeService) ProbeProxy(ctx context.Context, proxyURL string) (*service.ProxyExitInfo, int64, error) {
@@ -67,15 +124,25 @@ func (s *proxyProbeService) ProbeProxy(ctx context.Context, proxyURL string) (*s
 		return nil, 0, fmt.Errorf("failed to create proxy client: %w", err)
 	}
 
+	targets := probeTargetsFromEnv()
+	if len(targets) == 0 {
+		targets = defaultProbeTargets()
+	}
+
 	var lastErr error
-	for _, probe := range probeURLs {
+	tried := make([]string, 0, len(targets))
+	for _, probe := range targets {
 		exitInfo, latencyMs, err := s.probeWithURL(ctx, client, probe.url, probe.parser)
 		if err == nil {
 			return exitInfo, latencyMs, nil
 		}
+		tried = append(tried, fmt.Sprintf("%s -> %s", probe.url, sanitizeErrorText(err.Error())))
 		lastErr = err
 	}
 
+	if len(tried) > 0 {
+		return nil, 0, fmt.Errorf("all probe URLs failed (%d tried): %s (last error: %s)", len(tried), strings.Join(tried, "; "), sanitizeErrorText(lastErr.Error()))
+	}
 	return nil, 0, fmt.Errorf("all probe URLs failed, last error: %w", lastErr)
 }
 
@@ -94,6 +161,17 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 
 	latencyMs := time.Since(startTime).Milliseconds()
 
+	// "status" probe only checks connectivity; 4xx can still mean "reachable" (e.g. missing auth).
+	if parser == "status" {
+		if resp.StatusCode == http.StatusProxyAuthRequired {
+			return nil, latencyMs, fmt.Errorf("proxy authentication required (407)")
+		}
+		if resp.StatusCode >= 500 {
+			return nil, latencyMs, fmt.Errorf("request failed with status: %d", resp.StatusCode)
+		}
+		return &service.ProxyExitInfo{}, latencyMs, nil
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, latencyMs, fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
@@ -108,6 +186,8 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 		return s.parseIPAPI(body, latencyMs)
 	case "httpbin":
 		return s.parseHTTPBin(body, latencyMs)
+	case "ipify":
+		return s.parseIPify(body, latencyMs)
 	default:
 		return nil, latencyMs, fmt.Errorf("unknown parser: %s", parser)
 	}
@@ -165,5 +245,21 @@ func (s *proxyProbeService) parseHTTPBin(body []byte, latencyMs int64) (*service
 	}
 	return &service.ProxyExitInfo{
 		IP: result.Origin,
+	}, latencyMs, nil
+}
+
+func (s *proxyProbeService) parseIPify(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
+	// api.ipify.org?format=json 返回格式: {"ip":"1.2.3.4"}
+	var result struct {
+		IP string `json:"ip"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, latencyMs, fmt.Errorf("failed to parse ipify response: %w", err)
+	}
+	if result.IP == "" {
+		return nil, latencyMs, fmt.Errorf("ipify: no IP found in response")
+	}
+	return &service.ProxyExitInfo{
+		IP: result.IP,
 	}, latencyMs, nil
 }
