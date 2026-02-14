@@ -6,16 +6,18 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
@@ -119,23 +121,80 @@ func NeedsSetup() bool {
 	return true
 }
 
+func isMissingDatabase(err error, dbName string) bool {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && string(pqErr.Code) == "3D000" {
+		return strings.Contains(pqErr.Message, fmt.Sprintf("database \"%s\" does not exist", dbName))
+	}
+	return strings.Contains(err.Error(), fmt.Sprintf("database \"%s\" does not exist", dbName))
+}
+
 // TestDatabaseConnection tests the database connection and creates database if not exists
 func TestDatabaseConnection(cfg *DatabaseConfig) error {
-	// First, connect to the default 'postgres' database to check/create target database
-	defaultDSN := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.SSLMode,
+	// First, try connecting directly to the target database (common for managed DBs).
+	targetDSN := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
 	)
-
-	db, err := sql.Open("postgres", defaultDSN)
+	targetDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		return fmt.Errorf("failed to connect to database '%s': %w", cfg.DBName, err)
+	}
+	defer func() {
+		if err := targetDB.Close(); err != nil {
+			log.Printf("failed to close postgres connection: %v", err)
+		}
+	}()
+
+	ctxTarget, cancelTarget := context.WithTimeout(context.Background(), 5*time.Second)
+	err = targetDB.PingContext(ctxTarget)
+	cancelTarget()
+	if err == nil {
+		return nil
+	}
+	if !isMissingDatabase(err, cfg.DBName) {
+		return fmt.Errorf("ping failed: %w", err)
+	}
+
+	// First, connect to a maintenance database to check/create target database.
+	// Most PostgreSQL installations have a default "postgres" database, but some
+	// managed setups may remove it. Fallback to "template1" when needed.
+	maintenanceDBs := []string{"postgres", "template1"}
+	var db *sql.DB
+
+	for _, maintenanceDB := range maintenanceDBs {
+		defaultDSN := fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Host, cfg.Port, cfg.User, cfg.Password, maintenanceDB, cfg.SSLMode,
+		)
+
+		candidate, err := sql.Open("postgres", defaultDSN)
+		if err != nil {
+			return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = candidate.PingContext(ctx)
+		cancel()
+
+		if err == nil {
+			db = candidate
+			break
+		}
+
+		_ = candidate.Close()
+
+		if maintenanceDB == "postgres" && isMissingDatabase(err, "postgres") {
+			continue
+		}
+		return fmt.Errorf("ping failed: %w", err)
+	}
+
+	if db == nil {
+		return fmt.Errorf("ping failed: could not connect to maintenance database")
 	}
 
 	defer func() {
-		if db == nil {
-			return
-		}
 		if err := db.Close(); err != nil {
 			log.Printf("failed to close postgres connection: %v", err)
 		}
@@ -143,10 +202,6 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
-		return fmt.Errorf("ping failed: %w", err)
-	}
 
 	// Check if target database exists
 	var exists bool
@@ -157,10 +212,9 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 
 	// Create database if not exists
 	if !exists {
-		// 注意：数据库名不能参数化，依赖前置输入校验保障安全。
-		// Note: Database names cannot be parameterized, but we've already validated cfg.DBName
-		// in the handler using validateDBName() which only allows [a-zA-Z][a-zA-Z0-9_]*
-		_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", cfg.DBName))
+		// 注意：数据库名不能参数化；这里使用 QuoteIdentifier 做安全的标识符引用。
+		// Note: Database identifiers cannot be parameterized; QuoteIdentifier prevents SQL injection.
+		_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pq.QuoteIdentifier(cfg.DBName)))
 		if err != nil {
 			return fmt.Errorf("failed to create database '%s': %w", cfg.DBName, err)
 		}
@@ -168,23 +222,12 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 	}
 
 	// Now connect to the target database to verify
-	if err := db.Close(); err != nil {
-		log.Printf("failed to close postgres connection: %v", err)
-	}
-	db = nil
-
-	targetDSN := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
-	)
-
-	targetDB, err := sql.Open("postgres", targetDSN)
+	targetDB2, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database '%s': %w", cfg.DBName, err)
 	}
-
 	defer func() {
-		if err := targetDB.Close(); err != nil {
+		if err := targetDB2.Close(); err != nil {
 			log.Printf("failed to close postgres connection: %v", err)
 		}
 	}()
@@ -192,7 +235,7 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
 
-	if err := targetDB.PingContext(ctx2); err != nil {
+	if err := targetDB2.PingContext(ctx2); err != nil {
 		return fmt.Errorf("ping target database failed: %w", err)
 	}
 
