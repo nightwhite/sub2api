@@ -22,7 +22,9 @@ import (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	// Default GitHub repo used by "check updates" / "online update".
+	// Note: this fork does NOT follow upstream for version detection.
+	githubRepo = "nightwhite/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -31,6 +33,15 @@ const (
 	// Security: max download size (500MB)
 	maxDownloadSize = 500 * 1024 * 1024
 )
+
+func resolveUpdateRepo() string {
+	// Allow overriding update source repo via environment variable.
+	// Expected format: "owner/repo", e.g. "nightwhite/sub2api".
+	if repo := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO")); repo != "" {
+		return repo
+	}
+	return githubRepo
+}
 
 // UpdateCache defines cache operations for update service
 type UpdateCache interface {
@@ -274,7 +285,7 @@ func (s *UpdateService) Rollback() error {
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, resolveUpdateRepo())
 	if err != nil {
 		return nil, err
 	}
