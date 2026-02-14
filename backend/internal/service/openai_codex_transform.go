@@ -70,7 +70,13 @@ type codexTransformResult struct {
 	PromptCacheKey  string
 }
 
-func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTransformResult {
+type opencodeCacheMetadata struct {
+	ETag        string `json:"etag"`
+	LastFetch   string `json:"lastFetch,omitempty"`
+	LastChecked int64  `json:"lastChecked"`
+}
+
+func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompaction bool) codexTransformResult {
 	result := codexTransformResult{}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
 	needsToolContinuation := NeedsToolContinuation(reqBody)
@@ -94,9 +100,17 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTran
 		reqBody["store"] = false
 		result.Modified = true
 	}
-	if v, ok := reqBody["stream"].(bool); !ok || !v {
-		reqBody["stream"] = true
-		result.Modified = true
+	// 默认强制 stream=true（Codex internal API 更稳定且便于收集 usage），但 compact 端点需要 JSON 输出。
+	if isCompaction {
+		if _, ok := reqBody["stream"].(bool); !ok {
+			reqBody["stream"] = false
+			result.Modified = true
+		}
+	} else {
+		if v, ok := reqBody["stream"].(bool); !ok || !v {
+			reqBody["stream"] = true
+			result.Modified = true
+		}
 	}
 
 	// Strip parameters unsupported by codex models via the Responses API.
@@ -254,19 +268,20 @@ func applyCodexCLIInstructions(reqBody map[string]any) bool {
 	return false
 }
 
-// applyOpenCodeInstructions 为非 Codex CLI 请求应用内置 Codex CLI 指令（兼容历史函数名）
-// 优先使用内置 Codex CLI 指令覆盖
+// applyOpenCodeInstructions 为非 Codex CLI 请求应用 opencode 指令
+// 仅在 instructions 为空时补充，避免覆盖用户显式提供的 instructions。
 func applyOpenCodeInstructions(reqBody map[string]any) bool {
-	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
-	existingInstructions, _ := reqBody["instructions"].(string)
-	existingInstructions = strings.TrimSpace(existingInstructions)
+	if !isInstructionsEmpty(reqBody) {
+		return false
+	}
 
+	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
 	if instructions != "" {
-		if existingInstructions != instructions {
-			reqBody["instructions"] = instructions
-			return true
-		}
-	} else if existingInstructions == "" {
+		reqBody["instructions"] = instructions
+		return true
+	}
+
+	if instructions == "" {
 		codexInstructions := strings.TrimSpace(getCodexCLIInstructions())
 		if codexInstructions != "" {
 			reqBody["instructions"] = codexInstructions
