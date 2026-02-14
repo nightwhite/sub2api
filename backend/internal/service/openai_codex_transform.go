@@ -107,17 +107,11 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 		reqBody["store"] = false
 		result.Modified = true
 	}
-	// 默认强制 stream=true（Codex internal API 更稳定且便于收集 usage），但 compact 端点需要 JSON 输出。
-	if isCompaction {
-		if _, ok := reqBody["stream"].(bool); !ok {
-			reqBody["stream"] = false
-			result.Modified = true
-		}
-	} else {
-		if v, ok := reqBody["stream"].(bool); !ok || !v {
-			reqBody["stream"] = true
-			result.Modified = true
-		}
+	// OAuth 走 ChatGPT internal API 时，stream 必须为 true（上游要求）。
+	// 即使是 compact 端点，我们也用 stream=true 向上游请求，然后在服务端把 SSE 转成 JSON 返回给客户端。
+	if v, ok := reqBody["stream"].(bool); !ok || !v {
+		reqBody["stream"] = true
+		result.Modified = true
 	}
 
 	if _, ok := reqBody["max_output_tokens"]; ok {

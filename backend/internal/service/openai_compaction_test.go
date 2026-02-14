@@ -62,3 +62,18 @@ func TestExpandCompactionIntoInstructions(t *testing.T) {
 	require.Contains(t, instructions, "Conversation history summary")
 	require.Contains(t, instructions, "SUMMARY")
 }
+
+func TestApplyCodexOAuthTransform_CompactionStillForcesStreamTrue(t *testing.T) {
+	reqBody := map[string]any{
+		"model":  "gpt-5.1",
+		"stream": false,
+		"input":  []any{},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, false, true)
+	require.True(t, result.Modified)
+
+	stream, ok := reqBody["stream"].(bool)
+	require.True(t, ok)
+	require.True(t, stream)
+}
