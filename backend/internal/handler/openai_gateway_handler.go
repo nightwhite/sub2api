@@ -517,6 +517,9 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 				continue
 			}
 			log.Printf("Account %d: Compact request failed: %v", account.ID, err)
+			if !c.Writer.Written() {
+				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+			}
 			return
 		}
 

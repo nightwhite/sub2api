@@ -14,16 +14,16 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 )
-
-const defaultCompactionInstructions = "把下面对话压缩成更短的历史：保留关键决定、结论、TODO；删掉闲聊和重复。输出尽量短，但要可继续对话。"
 
 // Compact implements a "real" /v1/responses/compact behavior:
 // - If upstream supports /responses/compact (API key accounts), pass through.
@@ -57,13 +57,8 @@ func (s *OpenAIGatewayService) Compact(ctx context.Context, c *gin.Context, acco
 	wantUpstreamStream := account != nil && account.Type == AccountTypeOAuth
 	reqBody["stream"] = wantUpstreamStream
 
-	// For non-/responses/compact-supporting upstreams (notably OAuth), we need an instructions string
-	// to actually "compact" the history.
-	if account != nil && account.Type == AccountTypeOAuth {
-		if isInstructionsEmpty(reqBody) {
-			reqBody["instructions"] = defaultCompactionInstructions
-		}
-	}
+	// NOTE: We do not inject default "instructions". If the client does not provide
+	// instructions, we pass the request through as-is (except stream normalization).
 
 	upstreamBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -244,9 +239,51 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		proxyURL = account.Proxy.URL()
 	}
 
+	// Capture upstream request body for ops retry of this attempt.
+	if c != nil {
+		c.Set(OpsUpstreamRequestBodyKey, string(body))
+	}
+
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return nil, nil, err
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		setOpsUpstreamError(c, 0, safeErr, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: 0,
+			Kind:               "request_error",
+			Message:            safeErr,
+		})
+
+		// Always emit a structured warning log so operators can find failures even when the
+		// client receives a generic 502 and we do not log upstream bodies.
+		clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string)
+		slog.Warn("openai_upstream_request_failed",
+			"platform", PlatformOpenAI,
+			"request_path", requestPath,
+			"client_request_id", clientRequestID,
+			"account_id", account.ID,
+			"account_name", account.Name,
+			"account_type", account.Type,
+			"model", originalModel,
+			"mapped_model", mappedModel,
+			"stream", reqStream,
+			"proxy_enabled", proxyURL != "",
+			"elapsed_ms", time.Since(startTime).Milliseconds(),
+			"error", safeErr,
+		)
+
+		if c != nil && !c.Writer.Written() {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": gin.H{
+					"type":    "upstream_error",
+					"message": "Upstream request failed",
+				},
+			})
+		}
+		return nil, nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
