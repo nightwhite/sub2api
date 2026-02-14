@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -50,6 +52,49 @@ type proxyProbeService struct {
 	insecureSkipVerify bool
 	allowPrivateHosts  bool
 	validateResolvedIP bool
+}
+
+func looksLikeFakeIP(ip netip.Addr) bool {
+	// 198.18.0.0/15 is reserved for benchmarking (RFC 2544); commonly used by proxy tools as "fake-ip".
+	fakeIPRange := netip.MustParsePrefix("198.18.0.0/15")
+	return fakeIPRange.Contains(ip)
+}
+
+func (s *proxyProbeService) detectLikelyFakeIP(ctx context.Context, proxyURL string) error {
+	u, err := url.Parse(strings.TrimSpace(proxyURL))
+	if err != nil {
+		return nil
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return nil
+	}
+
+	// Don't block explicit IP hosts (users may intentionally use reserved ranges).
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if looksLikeFakeIP(ip) {
+			return fmt.Errorf("proxy host resolved to %s (likely fake-ip). Disable fake-ip/DNS override in your proxy tool or use the real proxy IP", ip.String())
+		}
+		return nil
+	}
+
+	// Resolve using system resolver; if it returns 198.18/15, it's almost certainly fake-ip.
+	resolveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(resolveCtx, host)
+	if err != nil {
+		return nil
+	}
+	for _, a := range addrs {
+		ip, ok := netip.AddrFromSlice(a.IP)
+		if !ok {
+			continue
+		}
+		if looksLikeFakeIP(ip) {
+			return fmt.Errorf("proxy host %s resolved to %s (likely fake-ip). Disable fake-ip/DNS override in your proxy tool or use the real proxy IP", host, ip.String())
+		}
+	}
+	return nil
 }
 
 var authInURLRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@`)
@@ -112,6 +157,10 @@ func probeTargetsFromEnv() []probeTarget {
 }
 
 func (s *proxyProbeService) ProbeProxy(ctx context.Context, proxyURL string) (*service.ProxyExitInfo, int64, error) {
+	if err := s.detectLikelyFakeIP(ctx, proxyURL); err != nil {
+		return nil, 0, err
+	}
+
 	client, err := httpclient.GetClient(httpclient.Options{
 		ProxyURL:           proxyURL,
 		Timeout:            defaultProxyProbeTimeout,
