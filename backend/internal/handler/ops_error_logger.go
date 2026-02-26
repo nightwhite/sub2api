@@ -312,8 +312,9 @@ func extractOpsFullRequestHeaders(c *gin.Context) map[string][]string {
 
 type opsCaptureWriter struct {
 	gin.ResponseWriter
-	limit int
-	buf   bytes.Buffer
+	limit     int
+	buf       bytes.Buffer
+	truncated bool
 }
 
 func (w *opsCaptureWriter) Write(b []byte) (int, error) {
@@ -324,9 +325,12 @@ func (w *opsCaptureWriter) Write(b []byte) (int, error) {
 			remaining := w.limit - w.buf.Len()
 			if len(b) > remaining {
 				_, _ = w.buf.Write(b[:remaining])
+				w.truncated = true
 			} else {
 				_, _ = w.buf.Write(b)
 			}
+		} else if len(b) > 0 {
+			w.truncated = true
 		}
 	}
 	return w.ResponseWriter.Write(b)
@@ -340,9 +344,12 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 			remaining := w.limit - w.buf.Len()
 			if len(s) > remaining {
 				_, _ = w.buf.WriteString(s[:remaining])
+				w.truncated = true
 			} else {
 				_, _ = w.buf.WriteString(s)
 			}
+		} else if len(s) > 0 {
+			w.truncated = true
 		}
 	}
 	return w.ResponseWriter.WriteString(s)
@@ -355,8 +362,8 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 // - Streaming errors after the response has started (SSE) may still need explicit logging.
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 异常日志需要全量保存错误响应体：这里不做截断（limit<=0 表示不限制）。
-		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 0}
+		// Keep enough error details for troubleshooting, with a hard cap to avoid OOM.
+		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 1 * 1024 * 1024}
 		c.Writer = w
 		c.Next()
 
@@ -814,6 +821,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		body := w.buf.Bytes()
+		capturedBody := string(body)
+		if w.truncated {
+			capturedBody += "\n<ops_error_body_truncated>"
+		}
 		parsed := parseOpsErrorResponse(body)
 
 		// Skip logging if a passthrough rule with skip_monitoring=true matched.
@@ -887,9 +898,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			IsCountTokens:     isCountTokensRequest(c),
 
 			ErrorMessage: parsed.Message,
-			// Keep the full captured error body (capture is already capped at 64KB) so the
-			// service layer can sanitize JSON before truncating for storage.
-			ErrorBody:   string(body),
+			// Keep the captured response body for troubleshooting (capture is capped by middleware).
+			ErrorBody:   capturedBody,
 			ErrorSource: errorSource,
 			ErrorOwner:  errorOwner,
 

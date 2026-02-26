@@ -422,6 +422,10 @@ ops:
   # Other detailed settings (cleanup, aggregation, etc.) are configured in ops settings dialog
   # 其他详细设置（数据清理、预聚合等）在运维监控设置对话框中配置
   enabled: true
+  # Store full exception payloads into ops_error_logs (may include sensitive data)
+  # 是否在 ops_error_logs 中保存完整异常请求/响应（可能包含敏感数据）
+  # 建议默认关闭，仅在隔离调试环境临时开启
+  store_full_exception_payloads: false
 
 # =============================================================================
 # JWT Configuration

@@ -1,10 +1,12 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -60,7 +62,29 @@ func Logger() gin.HandlerFunc {
 		l.Info("http request completed", zap.Time("completed_at", endTime))
 
 		if len(c.Errors) > 0 {
-			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
+			errs := make([]string, 0, len(c.Errors))
+			for _, item := range c.Errors {
+				if item == nil || item.Err == nil {
+					continue
+				}
+				msg := strings.TrimSpace(item.Err.Error())
+				if msg == "" {
+					continue
+				}
+				msg = truncateString(logredact.RedactText(msg), 512)
+				errs = append(errs, msg)
+			}
+			l.Warn("http request contains gin errors", zap.Int("error_count", len(c.Errors)), zap.Strings("errors", errs))
 		}
 	}
+}
+
+func truncateString(input string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(input) <= maxLen {
+		return input
+	}
+	return input[:maxLen]
 }

@@ -130,7 +130,7 @@ func (s *OpsSystemLogSink) run() {
 			return
 		}
 		started := time.Now()
-		inserted, err := s.flushBatch(baseCtx, batch)
+		inserted, err := s.flushBatchWithRetry(baseCtx, batch)
 		delay := time.Since(started)
 		if err != nil {
 			atomic.AddUint64(&s.writeFailed, uint64(len(batch)))
@@ -247,6 +247,26 @@ func (s *OpsSystemLogSink) flushBatch(baseCtx context.Context, batch []*logger.L
 		return 0, err
 	}
 	return int(inserted), nil
+}
+
+func (s *OpsSystemLogSink) flushBatchWithRetry(baseCtx context.Context, batch []*logger.LogEvent) (int, error) {
+	const maxAttempts = 3
+
+	var (
+		inserted int
+		err      error
+	)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		inserted, err = s.flushBatch(baseCtx, batch)
+		if err == nil {
+			return inserted, nil
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt*200) * time.Millisecond)
+	}
+	return 0, err
 }
 
 func (s *OpsSystemLogSink) Health() OpsSystemLogSinkHealth {

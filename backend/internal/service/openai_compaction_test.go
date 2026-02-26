@@ -354,3 +354,54 @@ func TestCompact_OAuth_ForcesStreamParameterBeforeForwarding(t *testing.T) {
 		})
 	}
 }
+
+func TestCompact_RejectsNonBooleanStream(t *testing.T) {
+	stub := &compactHTTPUpstreamStub{
+		do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"id":"resp_invalid_stream"}`)),
+			}, nil
+		},
+	}
+
+	svc := newCompactTestService(stub)
+	account := newCompactTestAccount()
+	c, recorder := newCompactTestContext("/v1/responses/compact")
+
+	_, _, _, _, err := svc.Compact(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":"true","input":[]}`))
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "stream must be a boolean")
+}
+
+func TestCompact_OAuth_NonStreamSSEWithoutFinalResponseReturnsBadGateway(t *testing.T) {
+	sseBody := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hi"}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	stub := &compactHTTPUpstreamStub{
+		do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"text/event-stream"},
+					"X-Request-Id": []string{"req_compact_oauth_invalid_final"},
+				},
+				Body: io.NopCloser(strings.NewReader(sseBody)),
+			}, nil
+		},
+	}
+
+	svc := newCompactTestService(stub)
+	account := newCompactOAuthTestAccount()
+	c, recorder := newCompactTestContext("/v1/responses/compact")
+
+	_, _, _, _, err := svc.Compact(context.Background(), c, account, []byte(`{"model":"gpt-5.1","stream":false,"input":[{"role":"user","content":"hi"}]}`))
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Upstream returned an invalid compact response")
+}

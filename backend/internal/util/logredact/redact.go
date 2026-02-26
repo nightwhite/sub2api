@@ -34,6 +34,11 @@ var defaultSensitiveKeyList = []string{
 var (
 	reGOCSPX = regexp.MustCompile(`GOCSPX-[0-9A-Za-z_-]{24,}`)
 	reAIza   = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
+
+	defaultKeyAlternation = buildKeyAlternation(nil)
+	reJSONLikeDefault     = regexp.MustCompile(`(?i)("(?:` + defaultKeyAlternation + `)"\s*:\s*")([^"]*)(")`)
+	reQueryLikeDefault    = regexp.MustCompile(`(?i)\b((?:` + defaultKeyAlternation + `))=([^&\s]+)`)
+	rePlainDefault        = regexp.MustCompile(`(?i)\b((?:` + defaultKeyAlternation + `))\b(\s*[:=]\s*)([^,\s]+)`)
 )
 
 func RedactMap(input map[string]any, extraKeys ...string) map[string]any {
@@ -83,13 +88,18 @@ func RedactText(input string, extraKeys ...string) string {
 		return RedactJSON(raw, extraKeys...)
 	}
 
-	keyAlt := buildKeyAlternation(extraKeys)
-	// JSON-like: "access_token":"..."
-	reJSONLike := regexp.MustCompile(`(?i)("(?:` + keyAlt + `)"\s*:\s*")([^"]*)(")`)
-	// Query-like: access_token=...
-	reQueryLike := regexp.MustCompile(`(?i)\b((?:` + keyAlt + `))=([^&\s]+)`)
-	// Plain: access_token: ... / access_token = ...
-	rePlain := regexp.MustCompile(`(?i)\b((?:` + keyAlt + `))\b(\s*[:=]\s*)([^,\s]+)`)
+	reJSONLike := reJSONLikeDefault
+	reQueryLike := reQueryLikeDefault
+	rePlain := rePlainDefault
+	if len(extraKeys) > 0 {
+		keyAlt := buildKeyAlternation(extraKeys)
+		// JSON-like: "access_token":"..."
+		reJSONLike = regexp.MustCompile(`(?i)("(?:` + keyAlt + `)"\s*:\s*")([^"]*)(")`)
+		// Query-like: access_token=...
+		reQueryLike = regexp.MustCompile(`(?i)\b((?:` + keyAlt + `))=([^&\s]+)`)
+		// Plain: access_token: ... / access_token = ...
+		rePlain = regexp.MustCompile(`(?i)\b((?:` + keyAlt + `))\b(\s*[:=]\s*)([^,\s]+)`)
+	}
 
 	out := input
 	out = reGOCSPX.ReplaceAllString(out, "GOCSPX-***")

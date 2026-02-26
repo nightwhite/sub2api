@@ -84,7 +84,17 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 	}
 
 	reqModel, _ := reqBody["model"].(string)
-	reqStream, _ := reqBody["stream"].(bool)
+	reqStream := false
+	if rawStream, hasStream := reqBody["stream"]; hasStream {
+		streamValue, ok := rawStream.(bool)
+		if !ok {
+			if c != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "stream must be a boolean"}})
+			}
+			return nil, nil, errors.New("stream must be a boolean")
+		}
+		reqStream = streamValue
+	}
 	clientRequestedStream := reqStream
 	promptCacheKey := ""
 	if v, ok := reqBody["prompt_cache_key"].(string); ok {
@@ -305,6 +315,26 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		if isEventStreamResponse(resp.Header) || bodyLooksLikeSSE {
 			if extracted, ok := extractCodexFinalResponse(string(rawBody)); ok {
 				finalBody = extracted
+			} else {
+				errMsg := "compact upstream returned stream payload without final response object"
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "invalid_upstream_response",
+					Message:            errMsg,
+				})
+				if c != nil && !c.Writer.Written() {
+					c.JSON(http.StatusBadGateway, gin.H{
+						"error": gin.H{
+							"type":    "upstream_error",
+							"message": "Upstream returned an invalid compact response",
+						},
+					})
+				}
+				return nil, nil, errors.New(errMsg)
 			}
 		}
 	}

@@ -33,8 +33,8 @@ func defaultOpsRuntimeLogConfig(cfg *config.Config) *OpsRuntimeLogConfig {
 	out.SamplingNext = cfg.Log.Sampling.Thereafter
 	out.Caller = cfg.Log.Caller
 	out.StacktraceLevel = strings.ToLower(strings.TrimSpace(cfg.Log.StacktraceLevel))
-	if cfg.Ops.Cleanup.ErrorLogRetentionDays > 0 {
-		out.RetentionDays = cfg.Ops.Cleanup.ErrorLogRetentionDays
+	if cfg.Log.Rotation.MaxAgeDays > 0 {
+		out.RetentionDays = cfg.Log.Rotation.MaxAgeDays
 	}
 	return out
 }
@@ -225,6 +225,7 @@ func applyOpsRuntimeLogConfig(cfg *OpsRuntimeLogConfig) error {
 		opts.Sampling.Enabled = cfg.EnableSampling
 		opts.Sampling.Initial = cfg.SamplingInitial
 		opts.Sampling.Thereafter = cfg.SamplingNext
+		opts.Rotation.MaxAgeDays = cfg.RetentionDays
 		return nil
 	}); err != nil {
 		return err

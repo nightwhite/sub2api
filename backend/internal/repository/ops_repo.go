@@ -1349,10 +1349,12 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			hasConstraint = true
 		}
 		if v := strings.TrimSpace(filter.Query); v != "" {
+			args = append(args, v)
+			tsQueryN := itoa(len(args))
 			like := "%" + v + "%"
 			args = append(args, like)
-			n := itoa(len(args))
-			clauses = append(clauses, "(l.message ILIKE $"+n+" OR COALESCE(l.request_id,'') ILIKE $"+n+" OR COALESCE(l.client_request_id,'') ILIKE $"+n+" OR COALESCE(l.extra::text,'') ILIKE $"+n+")")
+			likeN := itoa(len(args))
+			clauses = append(clauses, "(to_tsvector('simple', COALESCE(l.message, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR COALESCE(l.request_id,'') ILIKE $"+likeN+" OR COALESCE(l.client_request_id,'') ILIKE $"+likeN+" OR COALESCE(l.extra::text,'') ILIKE $"+likeN+")")
 			hasConstraint = true
 		}
 	}

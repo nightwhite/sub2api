@@ -479,6 +479,10 @@ type OpsConfig struct {
 	// UsePreaggregatedTables prefers ops_metrics_hourly/daily for long-window dashboard queries.
 	UsePreaggregatedTables bool `mapstructure:"use_preaggregated_tables"`
 
+	// StoreFullExceptionPayloads keeps full exception payloads in ops_error_logs for debugging.
+	// Disabled by default to avoid storing sensitive content.
+	StoreFullExceptionPayloads bool `mapstructure:"store_full_exception_payloads"`
+
 	// Cleanup controls periodic deletion of old ops data to prevent unbounded growth.
 	Cleanup OpsCleanupConfig `mapstructure:"cleanup"`
 
@@ -852,6 +856,7 @@ func setDefaults() {
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
 	viper.SetDefault("ops.use_preaggregated_tables", false)
+	viper.SetDefault("ops.store_full_exception_payloads", false)
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")
 	// Retention days: keep error logs shorter by default (debug-heavy), keep metrics longer.

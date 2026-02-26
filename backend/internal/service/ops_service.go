@@ -16,8 +16,9 @@ import (
 var ErrOpsDisabled = infraerrors.NotFound("OPS_DISABLED", "Ops monitoring is disabled")
 
 const (
-	opsMaxStoredRequestBodyBytes = 10 * 1024
-	opsMaxStoredErrorBodyBytes   = 20 * 1024
+	opsMaxStoredRequestBodyBytes   = 10 * 1024
+	opsMaxStoredErrorBodyBytes     = 20 * 1024
+	opsMaxFullExceptionPayloadSize = 1 * 1024 * 1024
 )
 
 // PrepareOpsRequestBodyForQueue 在入队前预处理请求体，返回可直接写入 OpsInsertErrorLogInput 的字段。
@@ -169,23 +170,29 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 		entry.ErrorType = "api_error"
 	}
 
-	storeFullExceptionPayloads := shouldStoreFullExceptionPayloads(entry)
+	storeFullExceptionPayloads := s.shouldStoreFullExceptionPayloads(entry)
 
 	// Request body handling.
 	if len(rawRequestBody) > 0 {
 		if storeFullExceptionPayloads {
 			bytesLen := len(rawRequestBody)
 			entry.RequestBodyBytes = &bytesLen
-			entry.RequestBodyTruncated = false
+			captureRaw := rawRequestBody
+			if len(captureRaw) > opsMaxFullExceptionPayloadSize {
+				captureRaw = captureRaw[:opsMaxFullExceptionPayloadSize]
+				entry.RequestBodyTruncated = true
+			} else {
+				entry.RequestBodyTruncated = false
+			}
 
 			// request_body 列是 JSONB，优先按 JSON 原样保存；解析失败时退化为 JSON string。
 			var decoded any
-			if err := json.Unmarshal(rawRequestBody, &decoded); err == nil {
+			if err := json.Unmarshal(captureRaw, &decoded); err == nil {
 				if encoded, marshalErr := json.Marshal(decoded); marshalErr == nil {
 					s := string(encoded)
 					entry.RequestBodyJSON = &s
 				}
-			} else if encoded, marshalErr := json.Marshal(string(rawRequestBody)); marshalErr == nil {
+			} else if encoded, marshalErr := json.Marshal(string(captureRaw)); marshalErr == nil {
 				s := string(encoded)
 				entry.RequestBodyJSON = &s
 			}
@@ -202,7 +209,7 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 	// error_body handling.
 	if strings.TrimSpace(entry.ErrorBody) != "" {
 		if storeFullExceptionPayloads {
-			entry.ErrorBody = strings.TrimSpace(entry.ErrorBody)
+			entry.ErrorBody = truncateString(strings.TrimSpace(entry.ErrorBody), opsMaxFullExceptionPayloadSize)
 		} else {
 			sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)
 			entry.ErrorBody = sanitized
@@ -218,6 +225,8 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 		if !storeFullExceptionPayloads {
 			msg = sanitizeUpstreamErrorMessage(msg)
 			msg = truncateString(msg, 2048)
+		} else {
+			msg = truncateString(msg, opsMaxFullExceptionPayloadSize)
 		}
 		if strings.TrimSpace(msg) == "" {
 			entry.UpstreamErrorMessage = nil
@@ -231,6 +240,7 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 			entry.UpstreamErrorDetail = nil
 		} else {
 			if storeFullExceptionPayloads {
+				detail = truncateString(detail, opsMaxFullExceptionPayloadSize)
 				entry.UpstreamErrorDetail = &detail
 			} else {
 				sanitized, _ := sanitizeErrorBodyForStorage(detail, opsMaxStoredErrorBodyBytes)
@@ -395,11 +405,14 @@ func (s *OpsService) UpdateErrorResolution(ctx context.Context, errorID int64, r
 	return s.opsRepo.UpdateErrorResolution(ctx, errorID, resolved, resolvedByUserID, resolvedRetryID, nil)
 }
 
-func shouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogInput) bool {
+func (s *OpsService) shouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogInput) bool {
 	if entry == nil {
 		return false
 	}
-	// 用户要求：异常日志（HTTP >= 400 / 流式异常）全量保留，禁止裁剪和脱敏。
+	if s == nil || s.cfg == nil || !s.cfg.Ops.StoreFullExceptionPayloads {
+		return false
+	}
+	// 仅在显式开启 store_full_exception_payloads 时，对异常日志保留完整载荷。
 	return entry.StatusCode >= 400 || strings.EqualFold(strings.TrimSpace(entry.ErrorType), "stream_fault")
 }
 

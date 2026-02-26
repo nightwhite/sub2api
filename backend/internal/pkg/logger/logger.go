@@ -224,7 +224,10 @@ func bridgeSlogLocked() {
 }
 
 func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
-	level, _ := parseLevel(options.Level)
+	level, ok := parseLevel(options.Level)
+	if !ok {
+		return nil, zap.AtomicLevel{}, fmt.Errorf("invalid log level: %s", options.Level)
+	}
 	atomic := zap.NewAtomicLevelAt(level)
 
 	encoderCfg := zapcore.EncoderConfig{
@@ -242,10 +245,13 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 	}
 
 	var enc zapcore.Encoder
-	if options.Format == "console" {
+	switch options.Format {
+	case "console":
 		enc = zapcore.NewConsoleEncoder(encoderCfg)
-	} else {
+	case "json":
 		enc = zapcore.NewJSONEncoder(encoderCfg)
+	default:
+		return nil, zap.AtomicLevel{}, fmt.Errorf("invalid log format: %s", options.Format)
 	}
 
 	sinkCore := newSinkCore()
@@ -285,7 +291,10 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 	}
 	core = sinkCore.Wrap(core)
 
-	stacktraceLevel, _ := parseStacktraceLevel(options.StacktraceLevel)
+	stacktraceLevel, ok := parseStacktraceLevel(options.StacktraceLevel)
+	if !ok {
+		return nil, zap.AtomicLevel{}, fmt.Errorf("invalid log stacktrace level: %s", options.StacktraceLevel)
+	}
 	zapOpts := make([]zap.Option, 0, 5)
 	if options.Caller {
 		zapOpts = append(zapOpts, zap.AddCaller())
