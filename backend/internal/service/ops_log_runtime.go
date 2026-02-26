@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -121,32 +122,32 @@ func (s *OpsService) GetRuntimeLogConfig(ctx context.Context) (*OpsRuntimeLogCon
 
 func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntimeLogConfig, operatorID int64) (*OpsRuntimeLogConfig, error) {
 	if s == nil || s.settingRepo == nil {
-		return nil, errors.New("setting repository not initialized")
+		return nil, infraerrors.ServiceUnavailable("OPS_RUNTIME_LOG_CONFIG_UNAVAILABLE", "Runtime log config service is unavailable")
 	}
 	if req == nil {
-		return nil, errors.New("invalid config")
+		return nil, infraerrors.BadRequest("OPS_RUNTIME_LOG_CONFIG_INVALID", "invalid config")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if operatorID <= 0 {
-		return nil, errors.New("invalid operator id")
+		return nil, infraerrors.BadRequest("OPS_RUNTIME_LOG_CONFIG_INVALID_OPERATOR", "invalid operator id")
 	}
 
 	oldCfg, err := s.GetRuntimeLogConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_LOAD_FAILED", "Failed to load runtime log config").WithCause(err)
 	}
 	next := *req
 	normalizeOpsRuntimeLogConfig(&next, defaultOpsRuntimeLogConfig(s.cfg))
-	if err := validateOpsRuntimeLogConfig(&next); err != nil {
-		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "validation_failed: "+err.Error())
-		return nil, err
+	if validateErr := validateOpsRuntimeLogConfig(&next); validateErr != nil {
+		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "validation_failed: "+validateErr.Error())
+		return nil, infraerrors.BadRequest("OPS_RUNTIME_LOG_CONFIG_INVALID", validateErr.Error()).WithCause(validateErr)
 	}
 
 	if err := applyOpsRuntimeLogConfig(&next); err != nil {
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "apply_failed: "+err.Error())
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_APPLY_FAILED", "Failed to apply runtime log config").WithCause(err)
 	}
 
 	next.Source = "runtime_setting"
@@ -155,13 +156,14 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 
 	encoded, err := json.Marshal(&next)
 	if err != nil {
-		return nil, err
+		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "marshal_failed: "+err.Error())
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_SERIALIZE_FAILED", "Failed to serialize runtime log config").WithCause(err)
 	}
 	if err := s.settingRepo.Set(ctx, SettingKeyOpsRuntimeLogConfig, string(encoded)); err != nil {
 		// 存储失败时回滚到旧配置，避免内存状态与持久化状态不一致。
 		_ = applyOpsRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "persist_failed: "+err.Error())
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_PERSIST_FAILED", "Failed to persist runtime log config").WithCause(err)
 	}
 
 	s.auditRuntimeLogConfigChange(operatorID, oldCfg, &next, "updated")
@@ -171,36 +173,36 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 
 func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64) (*OpsRuntimeLogConfig, error) {
 	if s == nil || s.settingRepo == nil {
-		return nil, errors.New("setting repository not initialized")
+		return nil, infraerrors.ServiceUnavailable("OPS_RUNTIME_LOG_CONFIG_UNAVAILABLE", "Runtime log config service is unavailable")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if operatorID <= 0 {
-		return nil, errors.New("invalid operator id")
+		return nil, infraerrors.BadRequest("OPS_RUNTIME_LOG_CONFIG_INVALID_OPERATOR", "invalid operator id")
 	}
 
 	oldCfg, err := s.GetRuntimeLogConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_LOAD_FAILED", "Failed to load runtime log config").WithCause(err)
 	}
 
 	resetCfg := defaultOpsRuntimeLogConfig(s.cfg)
 	normalizeOpsRuntimeLogConfig(resetCfg, defaultOpsRuntimeLogConfig(s.cfg))
-	if err := validateOpsRuntimeLogConfig(resetCfg); err != nil {
-		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_validation_failed: "+err.Error())
-		return nil, err
+	if validateErr := validateOpsRuntimeLogConfig(resetCfg); validateErr != nil {
+		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_validation_failed: "+validateErr.Error())
+		return nil, infraerrors.BadRequest("OPS_RUNTIME_LOG_CONFIG_INVALID", validateErr.Error()).WithCause(validateErr)
 	}
 	if err := applyOpsRuntimeLogConfig(resetCfg); err != nil {
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_apply_failed: "+err.Error())
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_APPLY_FAILED", "Failed to apply runtime log config").WithCause(err)
 	}
 
 	// 清理 runtime 覆盖配置，回退到 env/yaml baseline。
 	if err := s.settingRepo.Delete(ctx, SettingKeyOpsRuntimeLogConfig); err != nil && !errors.Is(err, ErrSettingNotFound) {
 		_ = applyOpsRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_persist_failed: "+err.Error())
-		return nil, err
+		return nil, infraerrors.InternalServer("OPS_RUNTIME_LOG_CONFIG_PERSIST_FAILED", "Failed to reset runtime log config").WithCause(err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
