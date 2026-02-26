@@ -27,11 +27,11 @@ server:
   # Trusted proxies for X-Forwarded-For parsing (CIDR/IP). Empty disables trusted proxies.
   # 信任的代理地址（CIDR/IP 格式），用于解析 X-Forwarded-For 头。留空则禁用代理信任。
   trusted_proxies: []
-  # Global max request body size in bytes (default: 100MB)
-  # 全局最大请求体大小（字节，默认 100MB）
+  # Global max request body size in bytes (default: 10MB)
+  # 全局最大请求体大小（字节，默认 10MB）
   # Applies to all requests, especially important for h2c first request memory protection
   # 适用于所有请求，对 h2c 第一请求的内存保护尤为重要
-  max_request_body_size: 104857600
+  max_request_body_size: 10485760
   # HTTP/2 Cleartext (h2c) configuration
   # HTTP/2 Cleartext (h2c) 配置
   h2c:
@@ -143,9 +143,9 @@ gateway:
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600
-  # Max request body size in bytes (default: 100MB)
-  # 请求体最大字节数（默认 100MB）
-  max_body_size: 104857600
+  # Max request body size in bytes (default: 10MB)
+  # 请求体最大字节数（默认 10MB）
+  max_body_size: 10485760
   # Connection pool isolation strategy:
   # 连接池隔离策略：
   # - proxy: Isolate by proxy, same proxy shares connection pool (suitable for few proxies, many accounts)
