@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -148,7 +149,11 @@ func (h *OpsHandler) UpdateRuntimeLogConfig(c *gin.Context) {
 
 	updated, err := h.opsService.UpdateRuntimeLogConfig(c.Request.Context(), &req, subject.UserID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		if isRuntimeLogConfigValidationError(err) {
+			response.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, updated)
@@ -174,10 +179,40 @@ func (h *OpsHandler) ResetRuntimeLogConfig(c *gin.Context) {
 
 	updated, err := h.opsService.ResetRuntimeLogConfig(c.Request.Context(), subject.UserID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		if isRuntimeLogConfigValidationError(err) {
+			response.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, updated)
+}
+
+func isRuntimeLogConfigValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+
+	if strings.Contains(msg, "must be one of") {
+		return true
+	}
+	if strings.Contains(msg, "must be positive") {
+		return true
+	}
+	if strings.Contains(msg, "must be between") {
+		return true
+	}
+	switch msg {
+	case "invalid config", "invalid operator id":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetAdvancedSettings returns Ops advanced settings (DB-backed).

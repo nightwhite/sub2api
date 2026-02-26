@@ -40,6 +40,7 @@ type OpsSystemLogSink struct {
 	droppedCount uint64
 	writeFailed  uint64
 	writtenCount uint64
+	flushCount   uint64
 	totalDelayNs uint64
 
 	lastError atomic.Value
@@ -139,6 +140,7 @@ func (s *OpsSystemLogSink) run() {
 			)
 		} else {
 			atomic.AddUint64(&s.writtenCount, uint64(inserted))
+			atomic.AddUint64(&s.flushCount, 1)
 			atomic.AddUint64(&s.totalDelayNs, uint64(delay.Nanoseconds()))
 			s.lastError.Store("")
 		}
@@ -252,10 +254,11 @@ func (s *OpsSystemLogSink) Health() OpsSystemLogSinkHealth {
 		return OpsSystemLogSinkHealth{}
 	}
 	written := atomic.LoadUint64(&s.writtenCount)
+	flushes := atomic.LoadUint64(&s.flushCount)
 	totalDelay := atomic.LoadUint64(&s.totalDelayNs)
 	var avgDelay uint64
-	if written > 0 {
-		avgDelay = (totalDelay / written) / uint64(time.Millisecond)
+	if flushes > 0 {
+		avgDelay = (totalDelay / flushes) / uint64(time.Millisecond)
 	}
 
 	lastErr, _ := s.lastError.Load().(string)
@@ -293,43 +296,41 @@ func asString(v any) string {
 }
 
 func asInt64Ptr(v any) *int64 {
+	var (
+		n      int64
+		parsed bool
+	)
+
 	switch t := v.(type) {
 	case int:
-		n := int64(t)
-		if n <= 0 {
-			return nil
-		}
-		return &n
+		n = int64(t)
+		parsed = true
 	case int64:
-		n := t
-		if n <= 0 {
-			return nil
-		}
-		return &n
+		n = t
+		parsed = true
 	case float64:
-		n := int64(t)
-		if n <= 0 {
-			return nil
-		}
-		return &n
+		n = int64(t)
+		parsed = true
 	case json.Number:
-		if n, err := t.Int64(); err == nil {
-			if n <= 0 {
-				return nil
-			}
-			return &n
+		if value, err := t.Int64(); err == nil {
+			n = value
+			parsed = true
 		}
 	case string:
 		raw := strings.TrimSpace(t)
 		if raw == "" {
 			return nil
 		}
-		if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			if n <= 0 {
-				return nil
-			}
-			return &n
+		if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			n = value
+			parsed = true
 		}
 	}
-	return nil
+
+	if !parsed || n <= 0 {
+		return nil
+	}
+
+	out := n
+	return &out
 }

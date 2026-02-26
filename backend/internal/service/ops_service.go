@@ -20,19 +20,37 @@ const (
 	opsMaxStoredErrorBodyBytes   = 20 * 1024
 )
 
-// PrepareOpsRequestBodyForQueue 在入队前对请求体执行脱敏与裁剪，返回可直接写入 OpsInsertErrorLogInput 的字段。
+// PrepareOpsRequestBodyForQueue 在入队前预处理请求体，返回可直接写入 OpsInsertErrorLogInput 的字段。
+// preserveFull=true 时保留完整请求体；false 时执行脱敏与裁剪。
 // 该方法用于避免异步队列持有大块原始请求体，减少错误风暴下的内存放大风险。
-func PrepareOpsRequestBodyForQueue(raw []byte) (requestBodyJSON *string, truncated bool, requestBodyBytes *int) {
+func PrepareOpsRequestBodyForQueue(raw []byte, preserveFull bool) (requestBodyJSON *string, truncated bool, requestBodyBytes *int) {
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
-	sanitized, truncated, bytesLen := sanitizeAndTrimRequestBody(raw, opsMaxStoredRequestBodyBytes)
+	bytesLen := len(raw)
+	n := bytesLen
+	requestBodyBytes = &n
+
+	if preserveFull {
+		// request_body 列为 JSONB，优先保存规范化 JSON；解析失败时退化为 JSON string。
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err == nil {
+			if encoded, marshalErr := json.Marshal(decoded); marshalErr == nil {
+				s := string(encoded)
+				requestBodyJSON = &s
+			}
+		} else if encoded, marshalErr := json.Marshal(string(raw)); marshalErr == nil {
+			s := string(encoded)
+			requestBodyJSON = &s
+		}
+		return requestBodyJSON, false, requestBodyBytes
+	}
+
+	sanitized, truncated, _ := sanitizeAndTrimRequestBody(raw, opsMaxStoredRequestBodyBytes)
 	if sanitized != "" {
 		out := sanitized
 		requestBodyJSON = &out
 	}
-	n := bytesLen
-	requestBodyBytes = &n
 	return requestBodyJSON, truncated, requestBodyBytes
 }
 

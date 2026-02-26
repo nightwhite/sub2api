@@ -44,8 +44,7 @@ const (
 type opsErrorLogJob struct {
 	ops *service.OpsService
 
-	errorEntry       *service.OpsInsertErrorLogInput
-	errorRequestBody []byte
+	errorEntry *service.OpsInsertErrorLogInput
 
 	dumpEntry *service.OpsInsertRequestDumpInput
 }
@@ -99,7 +98,7 @@ func startOpsErrorLogWorkers() {
 					}()
 					if job.errorEntry != nil {
 						ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
-						_ = job.ops.RecordError(ctx, job.errorEntry, job.errorRequestBody)
+						_ = job.ops.RecordError(ctx, job.errorEntry, nil)
 						cancel()
 					}
 					if job.dumpEntry != nil {
@@ -133,6 +132,15 @@ func enqueueOpsErrorLogJob(ops *service.OpsService, errorEntry *service.OpsInser
 
 	opsErrorLogOnce.Do(startOpsErrorLogWorkers)
 
+	// Pre-process request body before enqueuing to avoid retaining large raw []byte in the async queue.
+	if errorEntry != nil && len(errorRequestBody) > 0 {
+		preserveFull := errorEntry.StatusCode >= 400 || strings.EqualFold(strings.TrimSpace(errorEntry.ErrorType), "stream_fault")
+		requestBodyJSON, truncated, requestBodyBytes := service.PrepareOpsRequestBodyForQueue(errorRequestBody, preserveFull)
+		errorEntry.RequestBodyJSON = requestBodyJSON
+		errorEntry.RequestBodyTruncated = truncated
+		errorEntry.RequestBodyBytes = requestBodyBytes
+	}
+
 	opsErrorLogMu.RLock()
 	defer opsErrorLogMu.RUnlock()
 	if opsErrorLogStopping || opsErrorLogQueue == nil {
@@ -140,7 +148,7 @@ func enqueueOpsErrorLogJob(ops *service.OpsService, errorEntry *service.OpsInser
 	}
 
 	select {
-	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, errorEntry: errorEntry, errorRequestBody: errorRequestBody, dumpEntry: dumpEntry}:
+	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, errorEntry: errorEntry, dumpEntry: dumpEntry}:
 		opsErrorLogQueueLen.Add(1)
 		opsErrorLogEnqueued.Add(1)
 	default:
@@ -501,10 +509,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 						entry.ClientIP = &clientIP
 					}
 
-					// Do NOT store full request bodies for streaming faults:
-					// - prompts can be extremely large
-					// - this path is for troubleshooting markers, not retry execution
-					// Keep only body size as a hint.
+					// Keep request body size in entry for quick diagnostics.
+					// Full request body fields will be materialized in enqueueOpsErrorLogJob
+					// according to current exception-payload policy.
 					if v, ok := c.Get(opsRequestBodyKey); ok {
 						if b, ok := v.([]byte); ok && len(b) > 0 {
 							bytesLen := len(b)
