@@ -522,7 +522,7 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 			return
 		}
 
-		if !(result != nil && result.Stream) && !c.Writer.Written() {
+		if (result == nil || !result.Stream) && !c.Writer.Written() {
 			if contentType == "" {
 				contentType = "application/json; charset=utf-8"
 			}
