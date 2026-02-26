@@ -2497,6 +2497,8 @@ export default {
         '5m': 'Last 5 minutes',
         '30m': 'Last 30 minutes',
         '1h': 'Last 1 hour',
+        '1d': 'Last 1 day',
+        '15d': 'Last 15 days',
         '6h': 'Last 6 hours',
         '24h': 'Last 24 hours',
         '7d': 'Last 7 days',
@@ -2562,6 +2564,26 @@ export default {
         healthLowAction: 'Monitor metric trends, prevent issue escalation',
         healthy: 'All system metrics normal',
         healthyImpact: 'Service running stable'
+      },
+      openaiTokenStats: {
+        title: 'OpenAI Token Stats',
+        viewModeTopN: 'Top N',
+        viewModePagination: 'Pagination',
+        failedToLoad: 'Failed to load OpenAI token stats',
+        prevPage: 'Previous',
+        nextPage: 'Next',
+        pageInfo: 'Page {page}/{total}',
+        empty: 'No OpenAI token stats in this time range.',
+        totalModels: 'Total models: {total}',
+        table: {
+          model: 'Model',
+          requestCount: 'Requests',
+          avgTokensPerSec: 'Avg Tokens/s',
+          avgFirstTokenMs: 'Avg TTFT (ms)',
+          totalOutputTokens: 'Total Output Tokens',
+          avgDurationMs: 'Avg Duration (ms)',
+          requestsWithFirstToken: 'Requests with TTFT'
+        }
       },
       // Error Log
       errorLog: {
