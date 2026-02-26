@@ -363,7 +363,7 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Keep enough error details for troubleshooting, with a hard cap to avoid OOM.
-		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 1 * 1024 * 1024}
+		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 10 * 1024 * 1024}
 		c.Writer = w
 		c.Next()
 

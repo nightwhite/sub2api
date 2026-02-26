@@ -18,7 +18,7 @@ var ErrOpsDisabled = infraerrors.NotFound("OPS_DISABLED", "Ops monitoring is dis
 const (
 	opsMaxStoredRequestBodyBytes   = 10 * 1024
 	opsMaxStoredErrorBodyBytes     = 20 * 1024
-	opsMaxFullExceptionPayloadSize = 1 * 1024 * 1024
+	opsMaxFullExceptionPayloadSize = 10 * 1024 * 1024
 )
 
 // PrepareOpsRequestBodyForQueue 在入队前预处理请求体，返回可直接写入 OpsInsertErrorLogInput 的字段。
