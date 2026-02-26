@@ -20,6 +20,22 @@ const (
 	opsMaxStoredErrorBodyBytes   = 20 * 1024
 )
 
+// PrepareOpsRequestBodyForQueue 在入队前对请求体执行脱敏与裁剪，返回可直接写入 OpsInsertErrorLogInput 的字段。
+// 该方法用于避免异步队列持有大块原始请求体，减少错误风暴下的内存放大风险。
+func PrepareOpsRequestBodyForQueue(raw []byte) (requestBodyJSON *string, truncated bool, requestBodyBytes *int) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	sanitized, truncated, bytesLen := sanitizeAndTrimRequestBody(raw, opsMaxStoredRequestBodyBytes)
+	if sanitized != "" {
+		out := sanitized
+		requestBodyJSON = &out
+	}
+	n := bytesLen
+	requestBodyBytes = &n
+	return requestBodyJSON, truncated, requestBodyBytes
+}
+
 // OpsService provides ingestion and query APIs for the Ops monitoring module.
 type OpsService struct {
 	opsRepo     OpsRepository
@@ -37,6 +53,7 @@ type OpsService struct {
 	openAIGatewayService      *OpenAIGatewayService
 	geminiCompatService       *GeminiMessagesCompatService
 	antigravityGatewayService *AntigravityGatewayService
+	systemLogSink             *OpsSystemLogSink
 }
 
 func NewOpsService(
@@ -51,7 +68,7 @@ func NewOpsService(
 	geminiCompatService *GeminiMessagesCompatService,
 	antigravityGatewayService *AntigravityGatewayService,
 ) *OpsService {
-	return &OpsService{
+	svc := &OpsService{
 		opsRepo:     opsRepo,
 		settingRepo: settingRepo,
 		cfg:         cfg,
@@ -65,6 +82,15 @@ func NewOpsService(
 		geminiCompatService:       geminiCompatService,
 		antigravityGatewayService: antigravityGatewayService,
 	}
+	svc.applyRuntimeLogConfigOnStartup(context.Background())
+	return svc
+}
+
+func (s *OpsService) SetSystemLogSink(sink *OpsSystemLogSink) {
+	if s == nil {
+		return
+	}
+	s.systemLogSink = sink
 }
 
 func (s *OpsService) RequireMonitoringEnabled(ctx context.Context) error {
@@ -125,30 +151,56 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 		entry.ErrorType = "api_error"
 	}
 
-	// Sanitize + trim request body (errors only).
+	storeFullExceptionPayloads := shouldStoreFullExceptionPayloads(entry)
+
+	// Request body handling.
 	if len(rawRequestBody) > 0 {
-		sanitized, truncated, bytesLen := sanitizeAndTrimRequestBody(rawRequestBody, opsMaxStoredRequestBodyBytes)
-		if sanitized != "" {
-			entry.RequestBodyJSON = &sanitized
+		if storeFullExceptionPayloads {
+			bytesLen := len(rawRequestBody)
+			entry.RequestBodyBytes = &bytesLen
+			entry.RequestBodyTruncated = false
+
+			// request_body 列是 JSONB，优先按 JSON 原样保存；解析失败时退化为 JSON string。
+			var decoded any
+			if err := json.Unmarshal(rawRequestBody, &decoded); err == nil {
+				if encoded, marshalErr := json.Marshal(decoded); marshalErr == nil {
+					s := string(encoded)
+					entry.RequestBodyJSON = &s
+				}
+			} else if encoded, marshalErr := json.Marshal(string(rawRequestBody)); marshalErr == nil {
+				s := string(encoded)
+				entry.RequestBodyJSON = &s
+			}
+		} else {
+			sanitized, truncated, bytesLen := sanitizeAndTrimRequestBody(rawRequestBody, opsMaxStoredRequestBodyBytes)
+			if sanitized != "" {
+				entry.RequestBodyJSON = &sanitized
+			}
+			entry.RequestBodyTruncated = truncated
+			entry.RequestBodyBytes = &bytesLen
 		}
-		entry.RequestBodyTruncated = truncated
-		entry.RequestBodyBytes = &bytesLen
 	}
 
-	// Sanitize + truncate error_body to avoid storing sensitive data.
+	// error_body handling.
 	if strings.TrimSpace(entry.ErrorBody) != "" {
-		sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)
-		entry.ErrorBody = sanitized
+		if storeFullExceptionPayloads {
+			entry.ErrorBody = strings.TrimSpace(entry.ErrorBody)
+		} else {
+			sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)
+			entry.ErrorBody = sanitized
+		}
 	}
 
-	// Sanitize upstream error context if provided by gateway services.
+	// Upstream context handling.
 	if entry.UpstreamStatusCode != nil && *entry.UpstreamStatusCode <= 0 {
 		entry.UpstreamStatusCode = nil
 	}
 	if entry.UpstreamErrorMessage != nil {
 		msg := strings.TrimSpace(*entry.UpstreamErrorMessage)
-		msg = sanitizeUpstreamErrorMessage(msg)
-		msg = truncateString(msg, 2048)
+		if !storeFullExceptionPayloads {
+			msg = sanitizeUpstreamErrorMessage(msg)
+			msg = truncateString(msg, 2048)
+		}
 		if strings.TrimSpace(msg) == "" {
 			entry.UpstreamErrorMessage = nil
 		} else {
@@ -160,24 +212,30 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 		if detail == "" {
 			entry.UpstreamErrorDetail = nil
 		} else {
-			sanitized, _ := sanitizeErrorBodyForStorage(detail, opsMaxStoredErrorBodyBytes)
-			if strings.TrimSpace(sanitized) == "" {
-				entry.UpstreamErrorDetail = nil
+			if storeFullExceptionPayloads {
+				entry.UpstreamErrorDetail = &detail
 			} else {
-				entry.UpstreamErrorDetail = &sanitized
+				sanitized, _ := sanitizeErrorBodyForStorage(detail, opsMaxStoredErrorBodyBytes)
+				if strings.TrimSpace(sanitized) == "" {
+					entry.UpstreamErrorDetail = nil
+				} else {
+					entry.UpstreamErrorDetail = &sanitized
+				}
 			}
 		}
 	}
 
-	// Sanitize + serialize upstream error events list.
+	// Serialize upstream error events list.
 	if len(entry.UpstreamErrors) > 0 {
-		const maxEvents = 32
 		events := entry.UpstreamErrors
-		if len(events) > maxEvents {
-			events = events[len(events)-maxEvents:]
+		if !storeFullExceptionPayloads {
+			const maxEvents = 32
+			if len(events) > maxEvents {
+				events = events[len(events)-maxEvents:]
+			}
 		}
 
-		sanitized := make([]*OpsUpstreamErrorEvent, 0, len(events))
+		serialized := make([]*OpsUpstreamErrorEvent, 0, len(events))
 		for _, ev := range events {
 			if ev == nil {
 				continue
@@ -185,8 +243,12 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 			out := *ev
 
 			out.Platform = strings.TrimSpace(out.Platform)
-			out.UpstreamRequestID = truncateString(strings.TrimSpace(out.UpstreamRequestID), 128)
-			out.Kind = truncateString(strings.TrimSpace(out.Kind), 64)
+			out.UpstreamRequestID = strings.TrimSpace(out.UpstreamRequestID)
+			out.Kind = strings.TrimSpace(out.Kind)
+			out.Message = strings.TrimSpace(out.Message)
+			out.Detail = strings.TrimSpace(out.Detail)
+			out.UpstreamRequestBody = strings.TrimSpace(out.UpstreamRequestBody)
+			out.UpstreamResponseBody = strings.TrimSpace(out.UpstreamResponseBody)
 
 			if out.AccountID < 0 {
 				out.AccountID = 0
@@ -198,48 +260,39 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 				out.AtUnixMs = 0
 			}
 
-			msg := sanitizeUpstreamErrorMessage(strings.TrimSpace(out.Message))
-			msg = truncateString(msg, 2048)
-			out.Message = msg
-
-			detail := strings.TrimSpace(out.Detail)
-			if detail != "" {
-				// Keep upstream detail small; request bodies are not stored here, only upstream error payloads.
-				sanitizedDetail, _ := sanitizeErrorBodyForStorage(detail, opsMaxStoredErrorBodyBytes)
-				out.Detail = sanitizedDetail
-			} else {
-				out.Detail = ""
-			}
-
-			out.UpstreamRequestBody = strings.TrimSpace(out.UpstreamRequestBody)
-			if out.UpstreamRequestBody != "" {
-				// Reuse the same sanitization/trimming strategy as request body storage.
-				// Keep it small so it is safe to persist in ops_error_logs JSON.
-				sanitized, truncated, _ := sanitizeAndTrimRequestBody([]byte(out.UpstreamRequestBody), 10*1024)
-				if sanitized != "" {
-					out.UpstreamRequestBody = sanitized
-					if truncated {
-						out.Kind = strings.TrimSpace(out.Kind)
-						if out.Kind == "" {
-							out.Kind = "upstream"
+			if !storeFullExceptionPayloads {
+				out.UpstreamRequestID = truncateString(out.UpstreamRequestID, 128)
+				out.Kind = truncateString(out.Kind, 64)
+				out.Message = truncateString(sanitizeUpstreamErrorMessage(out.Message), 2048)
+				if out.Detail != "" {
+					sanitizedDetail, _ := sanitizeErrorBodyForStorage(out.Detail, opsMaxStoredErrorBodyBytes)
+					out.Detail = sanitizedDetail
+				}
+				if out.UpstreamRequestBody != "" {
+					sanitizedBody, truncated, _ := sanitizeAndTrimRequestBody([]byte(out.UpstreamRequestBody), 10*1024)
+					if sanitizedBody != "" {
+						out.UpstreamRequestBody = sanitizedBody
+						if truncated {
+							if out.Kind == "" {
+								out.Kind = "upstream"
+							}
+							out.Kind = out.Kind + ":request_body_truncated"
 						}
-						out.Kind = out.Kind + ":request_body_truncated"
+					} else {
+						out.UpstreamRequestBody = ""
 					}
-				} else {
-					out.UpstreamRequestBody = ""
 				}
 			}
 
-			// Drop fully-empty events (can happen if only status code was known).
-			if out.UpstreamStatusCode == 0 && out.Message == "" && out.Detail == "" {
+			if out.UpstreamStatusCode == 0 && out.Message == "" && out.Detail == "" && out.UpstreamRequestBody == "" && out.UpstreamResponseBody == "" {
 				continue
 			}
 
 			evCopy := out
-			sanitized = append(sanitized, &evCopy)
+			serialized = append(serialized, &evCopy)
 		}
 
-		entry.UpstreamErrorsJSON = marshalOpsUpstreamErrors(sanitized)
+		entry.UpstreamErrorsJSON = marshalOpsUpstreamErrors(serialized)
 		entry.UpstreamErrors = nil
 	}
 
@@ -322,6 +375,14 @@ func (s *OpsService) UpdateErrorResolution(ctx context.Context, errorID int64, r
 		return infraerrors.InternalServer("OPS_ERROR_LOAD_FAILED", "Failed to load ops error log").WithCause(err)
 	}
 	return s.opsRepo.UpdateErrorResolution(ctx, errorID, resolved, resolvedByUserID, resolvedRetryID, nil)
+}
+
+func shouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogInput) bool {
+	if entry == nil {
+		return false
+	}
+	// 用户要求：异常日志（HTTP >= 400 / 流式异常）全量保留，禁止裁剪和脱敏。
+	return entry.StatusCode >= 400 || strings.EqualFold(strings.TrimSpace(entry.ErrorType), "stream_fault")
 }
 
 func sanitizeAndTrimRequestBody(raw []byte, maxBytes int) (jsonString string, truncated bool, bytesLen int) {

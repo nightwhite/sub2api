@@ -5,6 +5,9 @@ package ctxkey
 type Key string
 
 const (
+	// RequestID 服务端生成的请求 ID，用于日志串联与排障。
+	RequestID Key = "ctx_request_id"
+
 	// ForcePlatform 强制平台（用于 /antigravity 路由），由 middleware.ForcePlatform 设置
 	ForcePlatform Key = "ctx_force_platform"
 
@@ -24,6 +27,15 @@ const (
 	ThinkingEnabled Key = "ctx_thinking_enabled"
 	// Group 认证后的分组信息，由 API Key 认证中间件设置
 	Group Key = "ctx_group"
+
+	// AccountID 当前请求命中的上游账号 ID（用于访问日志和错误日志增强）
+	AccountID Key = "ctx_account_id"
+
+	// Platform 当前请求的平台标识（openai/claude/gemini/sora）
+	Platform Key = "ctx_platform"
+
+	// Model 当前请求的模型名
+	Model Key = "ctx_model"
 
 	// IsMaxTokensOneHaikuRequest 标识当前请求是否为 max_tokens=1 + haiku 模型的探测请求
 	// 用于 ClaudeCodeOnly 验证绕过（绕过 system prompt 检查，但仍需验证 User-Agent）

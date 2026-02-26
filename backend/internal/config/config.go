@@ -39,6 +39,7 @@ const (
 
 type Config struct {
 	Server       ServerConfig               `mapstructure:"server"`
+	Log          LogConfig                  `mapstructure:"log"`
 	CORS         CORSConfig                 `mapstructure:"cors"`
 	Security     SecurityConfig             `mapstructure:"security"`
 	Billing      BillingConfig              `mapstructure:"billing"`
@@ -63,6 +64,38 @@ type Config struct {
 	Timezone     string                     `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini       GeminiConfig               `mapstructure:"gemini"`
 	Update       UpdateConfig               `mapstructure:"update"`
+}
+
+type LogConfig struct {
+	Level           string            `mapstructure:"level"`
+	Format          string            `mapstructure:"format"`
+	ServiceName     string            `mapstructure:"service_name"`
+	Environment     string            `mapstructure:"env"`
+	Caller          bool              `mapstructure:"caller"`
+	StacktraceLevel string            `mapstructure:"stacktrace_level"`
+	Output          LogOutputConfig   `mapstructure:"output"`
+	Rotation        LogRotationConfig `mapstructure:"rotation"`
+	Sampling        LogSamplingConfig `mapstructure:"sampling"`
+}
+
+type LogOutputConfig struct {
+	ToStdout bool   `mapstructure:"to_stdout"`
+	ToFile   bool   `mapstructure:"to_file"`
+	FilePath string `mapstructure:"file_path"`
+}
+
+type LogRotationConfig struct {
+	MaxSizeMB  int  `mapstructure:"max_size_mb"`
+	MaxBackups int  `mapstructure:"max_backups"`
+	MaxAgeDays int  `mapstructure:"max_age_days"`
+	Compress   bool `mapstructure:"compress"`
+	LocalTime  bool `mapstructure:"local_time"`
+}
+
+type LogSamplingConfig struct {
+	Enabled    bool `mapstructure:"enabled"`
+	Initial    int  `mapstructure:"initial"`
+	Thereafter int  `mapstructure:"thereafter"`
 }
 
 type GeminiConfig struct {
@@ -719,6 +752,25 @@ func setDefaults() {
 	viper.SetDefault("server.h2c.max_upload_buffer_per_connection", 2<<20) // 2MB
 	viper.SetDefault("server.h2c.max_upload_buffer_per_stream", 512<<10)   // 512KB
 
+	// Log
+	viper.SetDefault("log.level", "info")
+	viper.SetDefault("log.format", "console")
+	viper.SetDefault("log.service_name", "sub2api")
+	viper.SetDefault("log.env", "production")
+	viper.SetDefault("log.caller", true)
+	viper.SetDefault("log.stacktrace_level", "error")
+	viper.SetDefault("log.output.to_stdout", true)
+	viper.SetDefault("log.output.to_file", true)
+	viper.SetDefault("log.output.file_path", "")
+	viper.SetDefault("log.rotation.max_size_mb", 100)
+	viper.SetDefault("log.rotation.max_backups", 10)
+	viper.SetDefault("log.rotation.max_age_days", 7)
+	viper.SetDefault("log.rotation.compress", true)
+	viper.SetDefault("log.rotation.local_time", true)
+	viper.SetDefault("log.sampling.enabled", false)
+	viper.SetDefault("log.sampling.initial", 100)
+	viper.SetDefault("log.sampling.thereafter", 100)
+
 	// CORS
 	viper.SetDefault("cors.allowed_origins", []string{})
 	viper.SetDefault("cors.allow_credentials", true)
@@ -953,6 +1005,49 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("server.frontend_url invalid: must not include userinfo")
 		}
 		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
+	}
+	if strings.TrimSpace(c.Log.Level) == "" {
+		return fmt.Errorf("log.level is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Log.Level)) {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("log.level must be one of: debug/info/warn/error")
+	}
+	if strings.TrimSpace(c.Log.Format) == "" {
+		return fmt.Errorf("log.format is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Log.Format)) {
+	case "json", "console":
+	default:
+		return fmt.Errorf("log.format must be one of: json/console")
+	}
+	if !c.Log.Output.ToStdout && !c.Log.Output.ToFile {
+		return fmt.Errorf("log.output.to_stdout and log.output.to_file cannot both be false")
+	}
+	if c.Log.Rotation.MaxSizeMB <= 0 {
+		return fmt.Errorf("log.rotation.max_size_mb must be positive")
+	}
+	if c.Log.Rotation.MaxBackups < 0 {
+		return fmt.Errorf("log.rotation.max_backups must be non-negative")
+	}
+	if c.Log.Rotation.MaxAgeDays < 0 {
+		return fmt.Errorf("log.rotation.max_age_days must be non-negative")
+	}
+	if c.Log.Sampling.Enabled {
+		if c.Log.Sampling.Initial <= 0 {
+			return fmt.Errorf("log.sampling.initial must be positive when sampling is enabled")
+		}
+		if c.Log.Sampling.Thereafter <= 0 {
+			return fmt.Errorf("log.sampling.thereafter must be positive when sampling is enabled")
+		}
+	} else {
+		if c.Log.Sampling.Initial < 0 {
+			return fmt.Errorf("log.sampling.initial must be non-negative")
+		}
+		if c.Log.Sampling.Thereafter < 0 {
+			return fmt.Errorf("log.sampling.thereafter must be non-negative")
+		}
 	}
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")

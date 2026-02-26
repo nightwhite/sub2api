@@ -161,6 +161,8 @@ type opsCleanupDeletedCounts struct {
 	requestDumps  int64
 	retryAttempts int64
 	alertEvents   int64
+	systemLogs    int64
+	logAudits     int64
 	systemMetrics int64
 	hourlyPreagg  int64
 	dailyPreagg   int64
@@ -168,11 +170,13 @@ type opsCleanupDeletedCounts struct {
 
 func (c opsCleanupDeletedCounts) String() string {
 	return fmt.Sprintf(
-		"error_logs=%d request_dumps=%d retry_attempts=%d alert_events=%d system_metrics=%d hourly_preagg=%d daily_preagg=%d",
+		"error_logs=%d request_dumps=%d retry_attempts=%d alert_events=%d system_logs=%d log_audits=%d system_metrics=%d hourly_preagg=%d daily_preagg=%d",
 		c.errorLogs,
 		c.requestDumps,
 		c.retryAttempts,
 		c.alertEvents,
+		c.systemLogs,
+		c.logAudits,
 		c.systemMetrics,
 		c.hourlyPreagg,
 		c.dailyPreagg,
@@ -243,6 +247,18 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 			return out, err
 		}
 		out.alertEvents = n
+
+		n, err = deleteOldRowsByID(ctx, s.db, "ops_system_logs", "created_at", cutoff, batchSize, false)
+		if err != nil {
+			return out, err
+		}
+		out.systemLogs = n
+
+		n, err = deleteOldRowsByID(ctx, s.db, "ops_system_log_cleanup_audits", "created_at", cutoff, batchSize, false)
+		if err != nil {
+			return out, err
+		}
+		out.logAudits = n
 	}
 
 	// Minute-level metrics snapshots.

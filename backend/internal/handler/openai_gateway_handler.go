@@ -372,8 +372,7 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 		return
 	}
 
-	// Compact endpoint should return JSON (non-streaming) regardless of client-provided `stream`.
-	reqStream := false
+	reqStream, _ := reqBody["stream"].(bool)
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 
@@ -523,10 +522,12 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 			return
 		}
 
-		if contentType == "" {
-			contentType = "application/json; charset=utf-8"
+		if !(result != nil && result.Stream) && !c.Writer.Written() {
+			if contentType == "" {
+				contentType = "application/json; charset=utf-8"
+			}
+			c.Data(status, contentType, respBody)
 		}
-		c.Data(status, contentType, respBody)
 
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)

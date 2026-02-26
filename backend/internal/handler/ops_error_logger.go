@@ -309,24 +309,32 @@ type opsCaptureWriter struct {
 }
 
 func (w *opsCaptureWriter) Write(b []byte) (int, error) {
-	if w.Status() >= 400 && w.limit > 0 && w.buf.Len() < w.limit {
-		remaining := w.limit - w.buf.Len()
-		if len(b) > remaining {
-			_, _ = w.buf.Write(b[:remaining])
-		} else {
+	if w.Status() >= 400 {
+		if w.limit <= 0 {
 			_, _ = w.buf.Write(b)
+		} else if w.buf.Len() < w.limit {
+			remaining := w.limit - w.buf.Len()
+			if len(b) > remaining {
+				_, _ = w.buf.Write(b[:remaining])
+			} else {
+				_, _ = w.buf.Write(b)
+			}
 		}
 	}
 	return w.ResponseWriter.Write(b)
 }
 
 func (w *opsCaptureWriter) WriteString(s string) (int, error) {
-	if w.Status() >= 400 && w.limit > 0 && w.buf.Len() < w.limit {
-		remaining := w.limit - w.buf.Len()
-		if len(s) > remaining {
-			_, _ = w.buf.WriteString(s[:remaining])
-		} else {
+	if w.Status() >= 400 {
+		if w.limit <= 0 {
 			_, _ = w.buf.WriteString(s)
+		} else if w.buf.Len() < w.limit {
+			remaining := w.limit - w.buf.Len()
+			if len(s) > remaining {
+				_, _ = w.buf.WriteString(s[:remaining])
+			} else {
+				_, _ = w.buf.WriteString(s)
+			}
 		}
 	}
 	return w.ResponseWriter.WriteString(s)
@@ -339,7 +347,8 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 // - Streaming errors after the response has started (SSE) may still need explicit logging.
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 64 * 1024}
+		// 异常日志需要全量保存错误响应体：这里不做截断（limit<=0 表示不限制）。
+		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 0}
 		c.Writer = w
 		c.Next()
 
@@ -561,7 +570,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 						CreatedAt: time.Now(),
 					}
 
-					enqueueOpsErrorLogJob(ops, entry, nil, dumpEntry)
+					enqueueOpsErrorLogJob(ops, entry, requestBody, dumpEntry)
 					return
 				}
 			}

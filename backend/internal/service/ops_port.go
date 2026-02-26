@@ -10,6 +10,10 @@ type OpsRepository interface {
 	ListErrorLogs(ctx context.Context, filter *OpsErrorLogFilter) (*OpsErrorLogList, error)
 	GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLogDetail, error)
 	ListRequestDetails(ctx context.Context, filter *OpsRequestDetailFilter) ([]*OpsRequestDetail, int64, error)
+	BatchInsertSystemLogs(ctx context.Context, inputs []*OpsInsertSystemLogInput) (int64, error)
+	ListSystemLogs(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
+	DeleteSystemLogs(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error)
+	InsertSystemLogCleanupAudit(ctx context.Context, input *OpsSystemLogCleanupAudit) error
 	GetRequestDebugBundle(ctx context.Context, key string, limit int) (*OpsRequestDebugBundle, error)
 	InsertRequestDump(ctx context.Context, input *OpsInsertRequestDumpInput) (int64, error)
 	GetRequestDumpByKey(ctx context.Context, key string) (*OpsRequestDump, error)
@@ -30,6 +34,7 @@ type OpsRepository interface {
 	GetLatencyHistogram(ctx context.Context, filter *OpsDashboardFilter) (*OpsLatencyHistogramResponse, error)
 	GetErrorTrend(ctx context.Context, filter *OpsDashboardFilter, bucketSeconds int) (*OpsErrorTrendResponse, error)
 	GetErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsErrorDistributionResponse, error)
+	GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error)
 
 	InsertSystemMetrics(ctx context.Context, input *OpsInsertSystemMetricsInput) error
 	GetLatestSystemMetrics(ctx context.Context, windowMinutes int) (*OpsSystemMetricsSnapshot, error)
@@ -101,6 +106,10 @@ type OpsInsertErrorLogInput struct {
 	// It is set by OpsService.RecordError before persisting.
 	UpstreamErrorsJSON *string
 
+	AuthLatencyMs      *int64
+	RoutingLatencyMs   *int64
+	UpstreamLatencyMs  *int64
+	ResponseLatencyMs  *int64
 	TimeToFirstTokenMs *int64
 
 	RequestBodyJSON      *string // sanitized json string (not raw bytes)
@@ -201,6 +210,69 @@ type OpsInsertSystemMetricsInput struct {
 
 	GoroutineCount        *int
 	ConcurrencyQueueDepth *int
+}
+
+type OpsInsertSystemLogInput struct {
+	CreatedAt       time.Time
+	Level           string
+	Component       string
+	Message         string
+	RequestID       string
+	ClientRequestID string
+	UserID          *int64
+	AccountID       *int64
+	Platform        string
+	Model           string
+	ExtraJSON       string
+}
+
+type OpsSystemLogFilter struct {
+	StartTime *time.Time
+	EndTime   *time.Time
+
+	Level     string
+	Component string
+
+	RequestID       string
+	ClientRequestID string
+	UserID          *int64
+	AccountID       *int64
+	Platform        string
+	Model           string
+	Query           string
+
+	Page     int
+	PageSize int
+}
+
+type OpsSystemLogCleanupFilter struct {
+	StartTime *time.Time
+	EndTime   *time.Time
+
+	Level     string
+	Component string
+
+	RequestID       string
+	ClientRequestID string
+	UserID          *int64
+	AccountID       *int64
+	Platform        string
+	Model           string
+	Query           string
+}
+
+type OpsSystemLogList struct {
+	Logs     []*OpsSystemLog `json:"logs"`
+	Total    int             `json:"total"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+}
+
+type OpsSystemLogCleanupAudit struct {
+	CreatedAt   time.Time
+	OperatorID  int64
+	Conditions  string
+	DeletedRows int64
 }
 
 type OpsSystemMetricsSnapshot struct {

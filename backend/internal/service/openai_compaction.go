@@ -25,9 +25,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Compact implements a "real" /v1/responses/compact behavior:
-// - If upstream supports /responses/compact (API key accounts), pass through.
-// - Otherwise, run a summarization request via /responses and wrap it into response.compaction.
+// Compact forwards /v1/responses/compact requests.
+// - stream=true: return streaming response
+// - stream=false or missing: return final upstream JSON response as-is
+// It must not synthesize compaction payload fields locally.
 func (s *OpenAIGatewayService) Compact(ctx context.Context, c *gin.Context, account *Account, originalBody []byte) (int, string, []byte, *OpenAIForwardResult, error) {
 	if len(originalBody) == 0 {
 		if c != nil {
@@ -52,14 +53,6 @@ func (s *OpenAIGatewayService) Compact(ctx context.Context, c *gin.Context, acco
 		requestPath = "/v1/responses/compact"
 	}
 
-	// Compact endpoint returns JSON to the client. For OAuth upstream (ChatGPT internal API),
-	// we must request stream=true and convert SSE to JSON server-side.
-	wantUpstreamStream := account != nil && account.Type == AccountTypeOAuth
-	reqBody["stream"] = wantUpstreamStream
-
-	// NOTE: We do not inject default "instructions". If the client does not provide
-	// instructions, we pass the request through as-is (except stream normalization).
-
 	upstreamBody, err := json.Marshal(reqBody)
 	if err != nil {
 		if c != nil {
@@ -72,69 +65,11 @@ func (s *OpenAIGatewayService) Compact(ctx context.Context, c *gin.Context, acco
 	if err != nil {
 		return 0, "", nil, nil, err
 	}
-
-	// If upstream already returned response.compaction, pass through.
-	var objProbe struct {
-		Object string `json:"object"`
-	}
-	_ = json.Unmarshal(raw, &objProbe)
-	if strings.TrimSpace(objProbe.Object) == "response.compaction" {
-		return http.StatusOK, "application/json; charset=utf-8", raw, result, nil
+	if result != nil && result.Stream {
+		return 0, "", nil, result, nil
 	}
 
-	// Otherwise, wrap as response.compaction.
-	firstUserText := extractFirstUserText(reqBody["input"])
-	summaryText := extractAssistantOutputText(raw)
-	if strings.TrimSpace(summaryText) == "" {
-		if c != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Upstream did not return compaction content"}})
-		}
-		return http.StatusBadGateway, "application/json; charset=utf-8", nil, nil, errors.New("upstream did not return compaction content")
-	}
-
-	encrypted, encErr := s.encryptCompactionSummary(summaryText)
-	if encErr != nil {
-		if c != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "api_error", "message": "Failed to encrypt compaction result"}})
-		}
-		return http.StatusInternalServerError, "application/json; charset=utf-8", nil, nil, fmt.Errorf("encrypt compaction: %w", encErr)
-	}
-
-	resp := map[string]any{
-		"id":         "resp_" + randomHex(12),
-		"object":     "response.compaction",
-		"created_at": time.Now().Unix(),
-		"output": []any{
-			map[string]any{
-				"id":     "msg_" + randomHex(12),
-				"type":   "message",
-				"status": "completed",
-				"content": []any{
-					map[string]any{
-						"type": "input_text",
-						"text": firstUserText,
-					},
-				},
-				"role": "user",
-			},
-			map[string]any{
-				"id":                "cmp_" + randomHex(12),
-				"type":              "compaction",
-				"encrypted_content": encrypted,
-			},
-		},
-		"usage": formatCompactUsage(&result.Usage),
-	}
-
-	b, err := json.Marshal(resp)
-	if err != nil {
-		if c != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "api_error", "message": "Failed to build compaction response"}})
-		}
-		return http.StatusInternalServerError, "application/json; charset=utf-8", nil, nil, fmt.Errorf("marshal compaction response: %w", err)
-	}
-
-	return http.StatusOK, "application/json; charset=utf-8", b, result, nil
+	return http.StatusOK, "application/json; charset=utf-8", raw, result, nil
 }
 
 func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin.Context, account *Account, body []byte, requestPath string) (*OpenAIForwardResult, []byte, error) {
@@ -150,6 +85,7 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 
 	reqModel, _ := reqBody["model"].(string)
 	reqStream, _ := reqBody["stream"].(bool)
+	clientRequestedStream := reqStream
 	promptCacheKey := ""
 	if v, ok := reqBody["prompt_cache_key"].(string); ok {
 		promptCacheKey = strings.TrimSpace(v)
@@ -165,13 +101,38 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 	isCodexCLI := openai.IsCodexCLIRequest(userAgent)
 	isCompaction := strings.Contains(requestPath, "/responses/compact")
 
-	// Compact endpoint returns JSON to the client. For OAuth upstream, stream must be true.
-	wantUpstreamStream := account != nil && account.Type == AccountTypeOAuth
-	if v, ok := reqBody["stream"].(bool); !ok || v != wantUpstreamStream {
-		reqBody["stream"] = wantUpstreamStream
-		reqStream = wantUpstreamStream
-		bodyModified = true
+	isOAuthCompact := isCompaction && account != nil && account.Type == AccountTypeOAuth
+	applyCompactionStreamPolicy := func() {
+		if !isCompaction {
+			return
+		}
+		// Compact stream policy:
+		// - If client requests stream=true, always forward stream=true.
+		// - Otherwise, OAuth upstream still requires stream=true, while API key/custom
+		//   upstreams should not forward stream for /responses/compact.
+		if clientRequestedStream {
+			if v, ok := reqBody["stream"].(bool); !ok || !v {
+				reqBody["stream"] = true
+				bodyModified = true
+			}
+			reqStream = true
+			return
+		}
+		if isOAuthCompact {
+			if v, ok := reqBody["stream"].(bool); !ok || !v {
+				reqBody["stream"] = true
+				bodyModified = true
+			}
+			reqStream = true
+			return
+		}
+		if _, has := reqBody["stream"]; has {
+			delete(reqBody, "stream")
+			bodyModified = true
+		}
+		reqStream = false
 	}
+	applyCompactionStreamPolicy()
 
 	mappedModel := account.GetMappedModel(reqModel)
 	if mappedModel != reqModel {
@@ -201,6 +162,9 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
+
+	// Guardrail: re-apply compact stream policy after OAuth/body transforms.
+	applyCompactionStreamPolicy()
 
 	// Compact endpoint is JSON: drop streaming-only hints and unsupported fields for non-CLI traffic.
 	if !isCodexCLI {
@@ -309,6 +273,27 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		return nil, nil, err
 	}
 
+	if clientRequestedStream {
+		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, mappedModel)
+		if err != nil {
+			return nil, nil, err
+		}
+		usage := streamResult.usage
+		if usage == nil {
+			usage = &OpenAIUsage{}
+		}
+		reasoningEffort := extractOpenAIReasoningEffort(reqBody, originalModel)
+		return &OpenAIForwardResult{
+			RequestID:       resp.Header.Get("x-request-id"),
+			Usage:           *usage,
+			Model:           originalModel,
+			ReasoningEffort: reasoningEffort,
+			Stream:          true,
+			Duration:        time.Since(startTime),
+			FirstTokenMs:    streamResult.firstTokenMs,
+		}, nil, nil
+	}
+
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, nil, err
@@ -366,103 +351,6 @@ func parseOpenAIUsage(body []byte) *OpenAIUsage {
 		OutputTokens:         response.Usage.OutputTokens,
 		CacheReadInputTokens: response.Usage.InputTokenDetails.CachedTokens,
 	}
-}
-
-func formatCompactUsage(usage *OpenAIUsage) map[string]any {
-	if usage == nil {
-		return map[string]any{
-			"input_tokens":  0,
-			"output_tokens": 0,
-			"input_tokens_details": map[string]any{
-				"cached_tokens": 0,
-			},
-			"output_tokens_details": map[string]any{
-				"reasoning_tokens": 0,
-			},
-			"total_tokens": 0,
-		}
-	}
-	total := usage.InputTokens + usage.OutputTokens
-	return map[string]any{
-		"input_tokens": usage.InputTokens,
-		"input_tokens_details": map[string]any{
-			"cached_tokens": usage.CacheReadInputTokens,
-		},
-		"output_tokens": usage.OutputTokens,
-		"output_tokens_details": map[string]any{
-			"reasoning_tokens": 0,
-		},
-		"total_tokens": total,
-	}
-}
-
-func extractFirstUserText(input any) string {
-	items, ok := input.([]any)
-	if !ok {
-		return ""
-	}
-	for _, item := range items {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if typ, _ := m["type"].(string); typ != "" && typ != "message" {
-			continue
-		}
-		role, _ := m["role"].(string)
-		if role != "user" {
-			continue
-		}
-		content := m["content"]
-		switch v := content.(type) {
-		case string:
-			return v
-		case []any:
-			for _, part := range v {
-				pm, ok := part.(map[string]any)
-				if !ok {
-					continue
-				}
-				pt, _ := pm["type"].(string)
-				if pt == "input_text" || pt == "text" || pt == "output_text" {
-					if text, _ := pm["text"].(string); strings.TrimSpace(text) != "" {
-						return text
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func extractAssistantOutputText(responseBody []byte) string {
-	if len(responseBody) == 0 {
-		return ""
-	}
-	var resp struct {
-		Output []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return ""
-	}
-	for _, item := range resp.Output {
-		if item.Type != "message" || item.Role != "assistant" {
-			continue
-		}
-		for _, part := range item.Content {
-			if part.Type == "output_text" && strings.TrimSpace(part.Text) != "" {
-				return part.Text
-			}
-		}
-	}
-	return ""
 }
 
 func (s *OpenAIGatewayService) encryptCompactionSummary(summary string) (string, error) {
