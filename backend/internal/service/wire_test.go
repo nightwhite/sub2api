@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/zeromicro/go-zero/core/collection"
 )
 
@@ -34,4 +35,14 @@ func TestProvideTimingWheelService_Success(t *testing.T) {
 		t.Fatalf("期望 svc 非空，但得到 nil")
 	}
 	svc.Stop()
+}
+
+func TestProvideOpsSystemLogSink_NilRepoReturnsNil(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Ops.Enabled = true
+
+	sink := ProvideOpsSystemLogSink(nil, cfg)
+	if sink != nil {
+		t.Fatalf("expected nil sink when opsRepo is nil")
+	}
 }

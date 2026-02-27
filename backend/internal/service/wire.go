@@ -197,6 +197,10 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository, cfg *config.Config) *OpsSyst
 		logger.SetSink(nil)
 		return nil
 	}
+	if opsRepo == nil {
+		logger.SetSink(nil)
+		return nil
+	}
 	sink := NewOpsSystemLogSink(opsRepo)
 	sink.Start()
 	logger.SetSink(sink)

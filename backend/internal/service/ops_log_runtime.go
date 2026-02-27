@@ -27,12 +27,22 @@ func defaultOpsRuntimeLogConfig(cfg *config.Config) *OpsRuntimeLogConfig {
 	if cfg == nil {
 		return out
 	}
-	out.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
+	if v := strings.ToLower(strings.TrimSpace(cfg.Log.Level)); v != "" {
+		out.Level = v
+	}
 	out.EnableSampling = cfg.Log.Sampling.Enabled
-	out.SamplingInitial = cfg.Log.Sampling.Initial
-	out.SamplingNext = cfg.Log.Sampling.Thereafter
-	out.Caller = cfg.Log.Caller
-	out.StacktraceLevel = strings.ToLower(strings.TrimSpace(cfg.Log.StacktraceLevel))
+	if cfg.Log.Sampling.Initial > 0 {
+		out.SamplingInitial = cfg.Log.Sampling.Initial
+	}
+	if cfg.Log.Sampling.Thereafter > 0 {
+		out.SamplingNext = cfg.Log.Sampling.Thereafter
+	}
+	if cfg.Log.Caller || strings.TrimSpace(cfg.Log.Level) != "" {
+		out.Caller = cfg.Log.Caller
+	}
+	if v := strings.ToLower(strings.TrimSpace(cfg.Log.StacktraceLevel)); v != "" {
+		out.StacktraceLevel = v
+	}
 	if cfg.Log.Rotation.MaxAgeDays > 0 {
 		out.RetentionDays = cfg.Log.Rotation.MaxAgeDays
 	}
