@@ -134,7 +134,7 @@ func enqueueOpsErrorLogJob(ops *service.OpsService, errorEntry *service.OpsInser
 
 	// Pre-process request body before enqueuing to avoid retaining large raw []byte in the async queue.
 	if errorEntry != nil && len(errorRequestBody) > 0 {
-		preserveFull := errorEntry.StatusCode >= 400 || strings.EqualFold(strings.TrimSpace(errorEntry.ErrorType), "stream_fault")
+		preserveFull := ops.ShouldStoreFullExceptionPayloads(errorEntry)
 		requestBodyJSON, truncated, requestBodyBytes := service.PrepareOpsRequestBodyForQueue(errorRequestBody, preserveFull)
 		errorEntry.RequestBodyJSON = requestBodyJSON
 		errorEntry.RequestBodyTruncated = truncated

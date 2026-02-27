@@ -33,18 +33,23 @@ func PrepareOpsRequestBodyForQueue(raw []byte, preserveFull bool) (requestBodyJS
 	requestBodyBytes = &n
 
 	if preserveFull {
+		captureRaw := raw
+		if len(captureRaw) > opsMaxFullExceptionPayloadSize {
+			captureRaw = captureRaw[:opsMaxFullExceptionPayloadSize]
+			truncated = true
+		}
 		// request_body 列为 JSONB，优先保存规范化 JSON；解析失败时退化为 JSON string。
 		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err == nil {
+		if err := json.Unmarshal(captureRaw, &decoded); err == nil {
 			if encoded, marshalErr := json.Marshal(decoded); marshalErr == nil {
 				s := string(encoded)
 				requestBodyJSON = &s
 			}
-		} else if encoded, marshalErr := json.Marshal(string(raw)); marshalErr == nil {
+		} else if encoded, marshalErr := json.Marshal(string(captureRaw)); marshalErr == nil {
 			s := string(encoded)
 			requestBodyJSON = &s
 		}
-		return requestBodyJSON, false, requestBodyBytes
+		return requestBodyJSON, truncated, requestBodyBytes
 	}
 
 	sanitized, truncated, _ := sanitizeAndTrimRequestBody(raw, opsMaxStoredRequestBodyBytes)
@@ -414,6 +419,10 @@ func (s *OpsService) shouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogIn
 	}
 	// 仅在显式开启 store_full_exception_payloads 时，对异常日志保留完整载荷。
 	return entry.StatusCode >= 400 || strings.EqualFold(strings.TrimSpace(entry.ErrorType), "stream_fault")
+}
+
+func (s *OpsService) ShouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogInput) bool {
+	return s.shouldStoreFullExceptionPayloads(entry)
 }
 
 func sanitizeAndTrimRequestBody(raw []byte, maxBytes int) (jsonString string, truncated bool, bytesLen int) {
