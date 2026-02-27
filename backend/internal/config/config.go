@@ -483,6 +483,10 @@ type OpsConfig struct {
 	// Disabled by default to avoid storing sensitive content.
 	StoreFullExceptionPayloads bool `mapstructure:"store_full_exception_payloads"`
 
+	// ErrorResponseCaptureMaxBytes controls max in-memory size of captured HTTP error body
+	// in ops middleware.
+	ErrorResponseCaptureMaxBytes int `mapstructure:"error_response_capture_max_bytes"`
+
 	// Cleanup controls periodic deletion of old ops data to prevent unbounded growth.
 	Cleanup OpsCleanupConfig `mapstructure:"cleanup"`
 
@@ -857,6 +861,7 @@ func setDefaults() {
 	viper.SetDefault("ops.enabled", true)
 	viper.SetDefault("ops.use_preaggregated_tables", false)
 	viper.SetDefault("ops.store_full_exception_payloads", false)
+	viper.SetDefault("ops.error_response_capture_max_bytes", 10*1024*1024)
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")
 	// Retention days: keep error logs shorter by default (debug-heavy), keep metrics longer.
@@ -1381,6 +1386,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Ops.MetricsCollectorCache.TTL < 0 {
 		return fmt.Errorf("ops.metrics_collector_cache.ttl must be non-negative")
+	}
+	if c.Ops.ErrorResponseCaptureMaxBytes <= 0 {
+		return fmt.Errorf("ops.error_response_capture_max_bytes must be positive")
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")

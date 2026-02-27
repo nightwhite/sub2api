@@ -362,8 +362,12 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 // - Streaming errors after the response has started (SSE) may still need explicit logging.
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Keep enough error details for troubleshooting, with a hard cap to avoid OOM.
-		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: 10 * 1024 * 1024}
+		// Keep enough error details for troubleshooting, with a configurable cap to avoid OOM.
+		captureLimit := 10 * 1024 * 1024
+		if ops != nil {
+			captureLimit = ops.ErrorResponseCaptureMaxBytes()
+		}
+		w := &opsCaptureWriter{ResponseWriter: c.Writer, limit: captureLimit}
 		c.Writer = w
 		c.Next()
 

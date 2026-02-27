@@ -19,6 +19,7 @@ const (
 	opsMaxStoredRequestBodyBytes   = 10 * 1024
 	opsMaxStoredErrorBodyBytes     = 20 * 1024
 	opsMaxFullExceptionPayloadSize = 10 * 1024 * 1024
+	opsDefaultErrorCaptureMaxBytes = 10 * 1024 * 1024
 )
 
 // PrepareOpsRequestBodyForQueue 在入队前预处理请求体，返回可直接写入 OpsInsertErrorLogInput 的字段。
@@ -432,6 +433,16 @@ func (s *OpsService) shouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogIn
 
 func (s *OpsService) ShouldStoreFullExceptionPayloads(entry *OpsInsertErrorLogInput) bool {
 	return s.shouldStoreFullExceptionPayloads(entry)
+}
+
+func (s *OpsService) ErrorResponseCaptureMaxBytes() int {
+	if s == nil || s.cfg == nil {
+		return opsDefaultErrorCaptureMaxBytes
+	}
+	if s.cfg.Ops.ErrorResponseCaptureMaxBytes <= 0 {
+		return opsDefaultErrorCaptureMaxBytes
+	}
+	return s.cfg.Ops.ErrorResponseCaptureMaxBytes
 }
 
 func sanitizeAndTrimRequestBody(raw []byte, maxBytes int) (jsonString string, truncated bool, bytesLen int) {

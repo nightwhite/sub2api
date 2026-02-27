@@ -426,6 +426,9 @@ ops:
   # 是否在 ops_error_logs 中保存完整异常请求/响应（可能包含敏感数据）
   # 建议默认关闭，仅在隔离调试环境临时开启
   store_full_exception_payloads: false
+  # Max bytes captured in memory for upstream error response body (default: 10MB)
+  # 上游错误响应体在内存中捕获的最大字节数（默认 10MB）
+  error_response_capture_max_bytes: 10485760
 
 # =============================================================================
 # JWT Configuration

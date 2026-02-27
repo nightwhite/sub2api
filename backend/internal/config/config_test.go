@@ -861,6 +861,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "ops.metrics_collector_cache.ttl",
 		},
 		{
+			name:    "ops error response capture max bytes",
+			mutate:  func(c *Config) { c.Ops.ErrorResponseCaptureMaxBytes = 0 },
+			wantErr: "ops.error_response_capture_max_bytes must be positive",
+		},
+		{
 			name:    "ops cleanup retention",
 			mutate:  func(c *Config) { c.Ops.Cleanup.ErrorLogRetentionDays = -1 },
 			wantErr: "ops.cleanup.error_log_retention_days",
