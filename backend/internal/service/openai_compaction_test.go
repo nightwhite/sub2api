@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -381,7 +382,7 @@ func TestCompact_RejectsNonBooleanStream(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "stream must be a boolean")
 }
 
-func TestParseOpenAIStreamParam(t *testing.T) {
+func TestParseStreamParam(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -419,7 +420,7 @@ func TestParseOpenAIStreamParam(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseOpenAIStreamParam(tc.reqBody)
+			got, err := openai.ParseStreamParam(tc.reqBody)
 			if tc.wantErr {
 				require.Error(t, err)
 				return

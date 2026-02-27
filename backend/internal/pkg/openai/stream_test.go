@@ -1,11 +1,10 @@
-package handler
+package openai
 
 import "testing"
 
-func TestOpenAIGatewayHandlerParseStreamParam(t *testing.T) {
+func TestParseStreamParam(t *testing.T) {
 	t.Parallel()
 
-	h := &OpenAIGatewayHandler{}
 	tests := []struct {
 		name      string
 		reqBody   map[string]any
@@ -41,7 +40,7 @@ func TestOpenAIGatewayHandlerParseStreamParam(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := h.parseStreamParam(tc.reqBody)
+			got, err := ParseStreamParam(tc.reqBody)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
