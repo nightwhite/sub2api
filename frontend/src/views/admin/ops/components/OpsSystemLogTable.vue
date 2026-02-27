@@ -127,6 +127,14 @@ const toRFC3339 = (value: string) => {
   return d.toISOString()
 }
 
+const parsePositiveID = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number.parseInt(trimmed, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
 const buildQuery = () => {
   const query: Record<string, any> = {
     page: page.value,
@@ -143,14 +151,10 @@ const buildQuery = () => {
   if (filters.component.trim()) query.component = filters.component.trim()
   if (filters.request_id.trim()) query.request_id = filters.request_id.trim()
   if (filters.client_request_id.trim()) query.client_request_id = filters.client_request_id.trim()
-  if (filters.user_id.trim()) {
-    const v = Number.parseInt(filters.user_id.trim(), 10)
-    if (Number.isFinite(v) && v > 0) query.user_id = v
-  }
-  if (filters.account_id.trim()) {
-    const v = Number.parseInt(filters.account_id.trim(), 10)
-    if (Number.isFinite(v) && v > 0) query.account_id = v
-  }
+  const userID = parsePositiveID(filters.user_id)
+  if (userID !== undefined) query.user_id = userID
+  const accountID = parsePositiveID(filters.account_id)
+  if (accountID !== undefined) query.account_id = accountID
   if (filters.platform.trim()) query.platform = filters.platform.trim()
   if (filters.model.trim()) query.model = filters.model.trim()
   if (filters.q.trim()) query.q = filters.q.trim()
@@ -252,8 +256,8 @@ const cleanupCurrentFilter = async () => {
       component: filters.component.trim() || undefined,
       request_id: filters.request_id.trim() || undefined,
       client_request_id: filters.client_request_id.trim() || undefined,
-      user_id: filters.user_id.trim() ? Number.parseInt(filters.user_id.trim(), 10) : undefined,
-      account_id: filters.account_id.trim() ? Number.parseInt(filters.account_id.trim(), 10) : undefined,
+      user_id: parsePositiveID(filters.user_id),
+      account_id: parsePositiveID(filters.account_id),
       platform: filters.platform.trim() || undefined,
       model: filters.model.trim() || undefined,
       q: filters.q.trim() || undefined
