@@ -293,7 +293,12 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 				out.AtUnixMs = 0
 			}
 
-			if !storeFullExceptionPayloads {
+			if storeFullExceptionPayloads {
+				out.Message = truncateString(out.Message, opsMaxFullExceptionPayloadSize)
+				out.Detail = truncateString(out.Detail, opsMaxFullExceptionPayloadSize)
+				out.UpstreamRequestBody = truncateString(out.UpstreamRequestBody, opsMaxFullExceptionPayloadSize)
+				out.UpstreamResponseBody = truncateString(out.UpstreamResponseBody, opsMaxFullExceptionPayloadSize)
+			} else {
 				out.UpstreamRequestID = truncateString(out.UpstreamRequestID, 128)
 				out.Kind = truncateString(out.Kind, 64)
 				out.Message = truncateString(sanitizeUpstreamErrorMessage(out.Message), 2048)
@@ -314,6 +319,10 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 					} else {
 						out.UpstreamRequestBody = ""
 					}
+				}
+				if out.UpstreamResponseBody != "" {
+					sanitizedBody, _ := sanitizeErrorBodyForStorage(out.UpstreamResponseBody, opsMaxStoredErrorBodyBytes)
+					out.UpstreamResponseBody = sanitizedBody
 				}
 			}
 

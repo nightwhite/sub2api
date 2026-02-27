@@ -380,7 +380,15 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 		return
 	}
 
-	reqStream, _ := reqBody["stream"].(bool)
+	reqStream := false
+	if rawStream, hasStream := reqBody["stream"]; hasStream {
+		streamValue, ok := rawStream.(bool)
+		if !ok {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "stream must be a boolean")
+			return
+		}
+		reqStream = streamValue
+	}
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 
