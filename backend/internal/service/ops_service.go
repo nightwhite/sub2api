@@ -150,7 +150,7 @@ func (s *OpsService) IsMonitoringEnabled(ctx context.Context) bool {
 	}
 }
 
-func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogInput, rawRequestBody []byte) error {
+func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogInput) error {
 	if entry == nil {
 		return nil
 	}
@@ -177,40 +177,6 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 	}
 
 	storeFullExceptionPayloads := s.shouldStoreFullExceptionPayloads(entry)
-
-	// Request body handling.
-	if len(rawRequestBody) > 0 {
-		if storeFullExceptionPayloads {
-			bytesLen := len(rawRequestBody)
-			entry.RequestBodyBytes = &bytesLen
-			captureRaw := rawRequestBody
-			if len(captureRaw) > opsMaxFullExceptionPayloadSize {
-				captureRaw = captureRaw[:opsMaxFullExceptionPayloadSize]
-				entry.RequestBodyTruncated = true
-			} else {
-				entry.RequestBodyTruncated = false
-			}
-
-			// request_body 列是 JSONB，优先按 JSON 原样保存；解析失败时退化为 JSON string。
-			var decoded any
-			if err := json.Unmarshal(captureRaw, &decoded); err == nil {
-				if encoded, marshalErr := json.Marshal(decoded); marshalErr == nil {
-					s := string(encoded)
-					entry.RequestBodyJSON = &s
-				}
-			} else if encoded, marshalErr := json.Marshal(string(captureRaw)); marshalErr == nil {
-				s := string(encoded)
-				entry.RequestBodyJSON = &s
-			}
-		} else {
-			sanitized, truncated, bytesLen := sanitizeAndTrimRequestBody(rawRequestBody, opsMaxStoredRequestBodyBytes)
-			if sanitized != "" {
-				entry.RequestBodyJSON = &sanitized
-			}
-			entry.RequestBodyTruncated = truncated
-			entry.RequestBodyBytes = &bytesLen
-		}
-	}
 
 	// error_body handling.
 	if strings.TrimSpace(entry.ErrorBody) != "" {

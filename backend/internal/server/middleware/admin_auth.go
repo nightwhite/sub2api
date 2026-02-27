@@ -178,7 +178,7 @@ func validateJWTForAdmin(
 
 	// 校验 TokenVersion，确保管理员改密后旧 token 失效
 	if claims.TokenVersion != user.TokenVersion {
-		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
+		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked")
 		return false
 	}
 

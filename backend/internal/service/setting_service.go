@@ -185,6 +185,19 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 
 // UpdateSettings 更新系统设置
 func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSettings) error {
+	if settings == nil {
+		return infraerrors.BadRequest("SETTINGS_INVALID", "settings payload is required")
+	}
+	if settings.PasswordResetEnabled {
+		frontendURL := ""
+		if s != nil && s.cfg != nil {
+			frontendURL = strings.TrimSpace(s.cfg.Server.FrontendURL)
+		}
+		if frontendURL == "" {
+			return infraerrors.BadRequest("PASSWORD_RESET_FRONTEND_URL_REQUIRED", "server.frontend_url is required when password reset is enabled")
+		}
+	}
+
 	updates := make(map[string]string)
 
 	// 注册设置

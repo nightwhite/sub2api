@@ -1143,7 +1143,7 @@ func (r *opsRepository) DeleteSystemLogs(ctx context.Context, filter *service.Op
 
 	where, args, hasConstraint := buildOpsSystemLogsCleanupWhere(filter)
 	if !hasConstraint {
-		return 0, fmt.Errorf("cleanup requires at least one filter condition")
+		return 0, service.ErrOpsSystemLogCleanupFilterRequired
 	}
 
 	query := "DELETE FROM ops_system_logs l " + where
@@ -1354,7 +1354,7 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			like := "%" + v + "%"
 			args = append(args, like)
 			likeN := itoa(len(args))
-			clauses = append(clauses, "(to_tsvector('simple', COALESCE(l.message, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR COALESCE(l.request_id,'') ILIKE $"+likeN+" OR COALESCE(l.client_request_id,'') ILIKE $"+likeN+" OR COALESCE(l.extra::text,'') ILIKE $"+likeN+")")
+			clauses = append(clauses, "(to_tsvector('simple', COALESCE(l.message, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR to_tsvector('simple', COALESCE(l.extra::text, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR COALESCE(l.request_id,'') ILIKE $"+likeN+" OR COALESCE(l.client_request_id,'') ILIKE $"+likeN+")")
 			hasConstraint = true
 		}
 	}

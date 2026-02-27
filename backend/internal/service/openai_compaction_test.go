@@ -125,7 +125,7 @@ func TestExpandCompactionIntoInstructions(t *testing.T) {
 	require.Contains(t, instructions, "SUMMARY")
 }
 
-func TestApplyCodexOAuthTransform_CompactionDoesNotForceStream(t *testing.T) {
+func TestApplyCodexOAuthTransform_CompactionDoesNotForceStreamWhenMissing(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.1",
 		"input": []any{},

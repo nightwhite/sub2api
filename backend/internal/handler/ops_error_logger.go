@@ -98,7 +98,7 @@ func startOpsErrorLogWorkers() {
 					}()
 					if job.errorEntry != nil {
 						ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
-						_ = job.ops.RecordError(ctx, job.errorEntry, nil)
+						_ = job.ops.RecordError(ctx, job.errorEntry)
 						cancel()
 					}
 					if job.dumpEntry != nil {

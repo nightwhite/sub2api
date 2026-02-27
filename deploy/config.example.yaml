@@ -22,6 +22,8 @@ server:
   mode: "release"
   # Frontend base URL used to generate external links in emails (e.g. password reset)
   # 用于生成邮件中的外部链接（例如：重置密码链接）的前端基础地址
+  # Required when password reset is enabled
+  # 开启密码重置功能时必须配置
   # Example: "https://example.com"
   frontend_url: ""
   # Trusted proxies for X-Forwarded-For parsing (CIDR/IP). Empty disables trusted proxies.

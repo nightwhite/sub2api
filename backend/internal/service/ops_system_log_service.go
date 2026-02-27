@@ -12,6 +12,8 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+var ErrOpsSystemLogCleanupFilterRequired = errors.New("ops system log cleanup requires at least one filter condition")
+
 func (s *OpsService) ListSystemLogs(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err
@@ -66,7 +68,7 @@ func (s *OpsService) CleanupSystemLogs(ctx context.Context, filter *OpsSystemLog
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
-		if strings.Contains(strings.ToLower(err.Error()), "requires at least one filter") {
+		if errors.Is(err, ErrOpsSystemLogCleanupFilterRequired) {
 			return 0, infraerrors.BadRequest("OPS_SYSTEM_LOG_CLEANUP_FILTER_REQUIRED", "cleanup requires at least one filter condition")
 		}
 		return 0, infraerrors.InternalServer("OPS_SYSTEM_LOG_CLEANUP_FAILED", "Failed to cleanup system logs").WithCause(err)
