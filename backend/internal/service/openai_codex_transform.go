@@ -108,7 +108,7 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 		result.Modified = true
 	}
 	// OAuth 常规 responses 请求仍沿用 stream=true 约定。
-	// compact 端点由调用方控制，避免修改 compact 官方入参结构。
+	// compact 端点不在这里处理；其 stream 策略统一由 openai_compaction.go 管控。
 	if !isCompaction {
 		if v, ok := reqBody["stream"].(bool); !ok || !v {
 			reqBody["stream"] = true

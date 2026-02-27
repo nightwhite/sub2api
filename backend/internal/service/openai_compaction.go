@@ -119,7 +119,7 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		// Compact stream policy:
 		// - If client requests stream=true, always forward stream=true.
 		// - Otherwise, OAuth upstream still requires stream=true, while API key/custom
-		//   upstreams should not forward stream for /responses/compact.
+		//   upstreams should forward stream=false explicitly for compatibility.
 		if clientRequestedStream {
 			if v, ok := reqBody["stream"].(bool); !ok || !v {
 				reqBody["stream"] = true
@@ -136,13 +136,12 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 			reqStream = true
 			return
 		}
-		if _, has := reqBody["stream"]; has {
-			delete(reqBody, "stream")
+		if v, ok := reqBody["stream"].(bool); !ok || v {
+			reqBody["stream"] = false
 			bodyModified = true
 		}
 		reqStream = false
 	}
-	applyCompactionStreamPolicy()
 
 	mappedModel := account.GetMappedModel(reqModel)
 	if mappedModel != reqModel {
@@ -173,7 +172,7 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		}
 	}
 
-	// Guardrail: re-apply compact stream policy after OAuth/body transforms.
+	// Apply compact stream policy once after all request-body transforms.
 	applyCompactionStreamPolicy()
 
 	// Compact endpoint is JSON: drop streaming-only hints and unsupported fields for non-CLI traffic.

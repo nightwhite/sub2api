@@ -1044,20 +1044,11 @@ func (c *Config) Validate() error {
 	if c.Log.Rotation.MaxAgeDays < 0 {
 		return fmt.Errorf("log.rotation.max_age_days must be non-negative")
 	}
-	if c.Log.Sampling.Enabled {
-		if c.Log.Sampling.Initial <= 0 {
-			return fmt.Errorf("log.sampling.initial must be positive when sampling is enabled")
-		}
-		if c.Log.Sampling.Thereafter <= 0 {
-			return fmt.Errorf("log.sampling.thereafter must be positive when sampling is enabled")
-		}
-	} else {
-		if c.Log.Sampling.Initial < 0 {
-			return fmt.Errorf("log.sampling.initial must be non-negative")
-		}
-		if c.Log.Sampling.Thereafter < 0 {
-			return fmt.Errorf("log.sampling.thereafter must be non-negative")
-		}
+	if c.Log.Sampling.Initial < 0 {
+		return fmt.Errorf("log.sampling.initial must be non-negative")
+	}
+	if c.Log.Sampling.Thereafter < 0 {
+		return fmt.Errorf("log.sampling.thereafter must be non-negative")
 	}
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")

@@ -171,8 +171,11 @@ func TestCompact_PassesThroughUpstreamResponseAsIs(t *testing.T) {
 
 	var forwarded map[string]any
 	require.NoError(t, json.Unmarshal(forwardedBody, &forwarded))
-	_, hasStream := forwarded["stream"]
-	require.False(t, hasStream)
+	streamValue, hasStream := forwarded["stream"]
+	require.True(t, hasStream)
+	streamBool, ok := streamValue.(bool)
+	require.True(t, ok)
+	require.False(t, streamBool)
 }
 
 func TestCompact_DoesNotBuildLocalCompactionWhenUpstreamObjectIsNotCompaction(t *testing.T) {
@@ -200,7 +203,7 @@ func TestCompact_DoesNotBuildLocalCompactionWhenUpstreamObjectIsNotCompaction(t 
 	require.NotContains(t, string(respBody), `"created_at"`)
 }
 
-func TestCompact_RemovesStreamParameterBeforeForwarding(t *testing.T) {
+func TestCompact_SetsStreamFalseBeforeForwarding(t *testing.T) {
 	testCases := []struct {
 		name string
 		body string
@@ -240,8 +243,11 @@ func TestCompact_RemovesStreamParameterBeforeForwarding(t *testing.T) {
 
 			var forwarded map[string]any
 			require.NoError(t, json.Unmarshal(forwardedBody, &forwarded))
-			_, hasStream := forwarded["stream"]
-			require.False(t, hasStream)
+			streamValue, hasStream := forwarded["stream"]
+			require.True(t, hasStream)
+			streamBool, ok := streamValue.(bool)
+			require.True(t, ok)
+			require.False(t, streamBool)
 		})
 	}
 }
