@@ -1320,12 +1320,12 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 		}
 		if v := strings.TrimSpace(filter.RequestID); v != "" {
 			args = append(args, v)
-			clauses = append(clauses, "COALESCE(l.request_id,'') = $"+itoa(len(args)))
+			clauses = append(clauses, "l.request_id = $"+itoa(len(args)))
 			hasConstraint = true
 		}
 		if v := strings.TrimSpace(filter.ClientRequestID); v != "" {
 			args = append(args, v)
-			clauses = append(clauses, "COALESCE(l.client_request_id,'') = $"+itoa(len(args)))
+			clauses = append(clauses, "l.client_request_id = $"+itoa(len(args)))
 			hasConstraint = true
 		}
 		if filter.UserID != nil && *filter.UserID > 0 {
@@ -1354,7 +1354,7 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			like := "%" + v + "%"
 			args = append(args, like)
 			likeN := itoa(len(args))
-			clauses = append(clauses, "(to_tsvector('simple', COALESCE(l.message, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR to_tsvector('simple', COALESCE(l.extra::text, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR COALESCE(l.request_id,'') ILIKE $"+likeN+" OR COALESCE(l.client_request_id,'') ILIKE $"+likeN+")")
+			clauses = append(clauses, "(to_tsvector('simple', COALESCE(l.message, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR to_tsvector('simple', COALESCE(l.extra::text, '')) @@ plainto_tsquery('simple', $"+tsQueryN+") OR l.request_id ILIKE $"+likeN+" OR l.client_request_id ILIKE $"+likeN+")")
 			hasConstraint = true
 		}
 	}

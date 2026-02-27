@@ -1000,11 +1000,8 @@ func setDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if strings.TrimSpace(c.Server.FrontendURL) != "" {
-		if err := ValidateAbsoluteHTTPURL(c.Server.FrontendURL); err != nil {
-			return fmt.Errorf("server.frontend_url invalid: %w", err)
-		}
-		u, err := url.Parse(strings.TrimSpace(c.Server.FrontendURL))
+	if trimmedURL := strings.TrimSpace(c.Server.FrontendURL); trimmedURL != "" {
+		u, err := parseAbsoluteHTTPURL(trimmedURL)
 		if err != nil {
 			return fmt.Errorf("server.frontend_url invalid: %w", err)
 		}
@@ -1014,7 +1011,7 @@ func (c *Config) Validate() error {
 		if u.User != nil {
 			return fmt.Errorf("server.frontend_url invalid: must not include userinfo")
 		}
-		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
+		warnIfInsecureURL("server.frontend_url", trimmedURL)
 	}
 	if strings.TrimSpace(c.Log.Level) == "" {
 		return fmt.Errorf("log.level is required")
@@ -1475,27 +1472,32 @@ func GetServerAddress() string {
 
 // ValidateAbsoluteHTTPURL 验证是否为有效的绝对 HTTP(S) URL
 func ValidateAbsoluteHTTPURL(raw string) error {
+	_, err := parseAbsoluteHTTPURL(raw)
+	return err
+}
+
+func parseAbsoluteHTTPURL(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return fmt.Errorf("empty url")
+		return nil, fmt.Errorf("empty url")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !u.IsAbs() {
-		return fmt.Errorf("must be absolute")
+		return nil, fmt.Errorf("must be absolute")
 	}
 	if !isHTTPScheme(u.Scheme) {
-		return fmt.Errorf("unsupported scheme: %s", u.Scheme)
+		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
 	if strings.TrimSpace(u.Host) == "" {
-		return fmt.Errorf("missing host")
+		return nil, fmt.Errorf("missing host")
 	}
 	if u.Fragment != "" {
-		return fmt.Errorf("must not include fragment")
+		return nil, fmt.Errorf("must not include fragment")
 	}
-	return nil
+	return u, nil
 }
 
 // ValidateFrontendRedirectURL 验证前端重定向 URL（可以是绝对 URL 或相对路径）
