@@ -100,14 +100,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Extract model and stream
 	reqModel, _ := reqBody["model"].(string)
-	reqStream := false
-	if rawStream, hasStream := reqBody["stream"]; hasStream {
-		streamValue, ok := rawStream.(bool)
-		if !ok {
-			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "stream must be a boolean")
-			return
-		}
-		reqStream = streamValue
+	reqStream, err := h.parseStreamParam(reqBody)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
 	}
 
 	// 验证 model 必填
@@ -380,14 +376,10 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 		return
 	}
 
-	reqStream := false
-	if rawStream, hasStream := reqBody["stream"]; hasStream {
-		streamValue, ok := rawStream.(bool)
-		if !ok {
-			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "stream must be a boolean")
-			return
-		}
-		reqStream = streamValue
+	reqStream, err := h.parseStreamParam(reqBody)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
 	}
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
@@ -611,6 +603,21 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+}
+
+func (h *OpenAIGatewayHandler) parseStreamParam(reqBody map[string]any) (bool, error) {
+	if reqBody == nil {
+		return false, nil
+	}
+	rawStream, hasStream := reqBody["stream"]
+	if !hasStream {
+		return false, nil
+	}
+	streamValue, ok := rawStream.(bool)
+	if !ok {
+		return false, errors.New("stream must be a boolean")
+	}
+	return streamValue, nil
 }
 
 func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {

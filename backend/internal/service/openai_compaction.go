@@ -84,16 +84,12 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 	}
 
 	reqModel, _ := reqBody["model"].(string)
-	reqStream := false
-	if rawStream, hasStream := reqBody["stream"]; hasStream {
-		streamValue, ok := rawStream.(bool)
-		if !ok {
-			if c != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "stream must be a boolean"}})
-			}
-			return nil, nil, errors.New("stream must be a boolean")
+	reqStream, err := parseOpenAIStreamParam(reqBody)
+	if err != nil {
+		if c != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
 		}
-		reqStream = streamValue
+		return nil, nil, err
 	}
 	clientRequestedStream := reqStream
 	promptCacheKey := ""
@@ -357,6 +353,21 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		Stream:          false,
 		Duration:        time.Since(startTime),
 	}, finalBody, nil
+}
+
+func parseOpenAIStreamParam(reqBody map[string]any) (bool, error) {
+	if reqBody == nil {
+		return false, nil
+	}
+	rawStream, hasStream := reqBody["stream"]
+	if !hasStream {
+		return false, nil
+	}
+	streamValue, ok := rawStream.(bool)
+	if !ok {
+		return false, errors.New("stream must be a boolean")
+	}
+	return streamValue, nil
 }
 
 func parseOpenAIUsage(body []byte) *OpenAIUsage {

@@ -381,6 +381,55 @@ func TestCompact_RejectsNonBooleanStream(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "stream must be a boolean")
 }
 
+func TestParseOpenAIStreamParam(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		reqBody   map[string]any
+		wantValue bool
+		wantErr   bool
+	}{
+		{
+			name:      "missing stream defaults false",
+			reqBody:   map[string]any{"model": "gpt-5.1"},
+			wantValue: false,
+			wantErr:   false,
+		},
+		{
+			name:      "stream true",
+			reqBody:   map[string]any{"stream": true},
+			wantValue: true,
+			wantErr:   false,
+		},
+		{
+			name:      "stream false",
+			reqBody:   map[string]any{"stream": false},
+			wantValue: false,
+			wantErr:   false,
+		},
+		{
+			name:      "stream invalid type",
+			reqBody:   map[string]any{"stream": "false"},
+			wantValue: false,
+			wantErr:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseOpenAIStreamParam(tc.reqBody)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantValue, got)
+		})
+	}
+}
+
 func TestCompact_OAuth_NonStreamSSEWithoutFinalResponseReturnsBadGateway(t *testing.T) {
 	sseBody := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"hi"}`,
