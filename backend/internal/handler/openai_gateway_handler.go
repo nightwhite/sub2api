@@ -1085,7 +1085,7 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 		return
 	}
 
-	sessionHash := h.gatewayService.GenerateSessionHash(c, reqBody)
+	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

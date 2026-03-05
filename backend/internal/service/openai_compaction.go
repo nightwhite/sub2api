@@ -305,7 +305,7 @@ func (s *OpenAIGatewayService) forwardForCompactJSON(ctx context.Context, c *gin
 		}
 
 		// Non-failover: reuse the existing error mapping behavior (writes to client).
-		_, err := s.handleErrorResponse(ctx, resp, c, account)
+		_, err := s.handleErrorResponse(ctx, resp, c, account, body)
 		return nil, nil, err
 	}
 
