@@ -23,6 +23,21 @@ func TestCompactionEncryptDecrypt_Roundtrip(t *testing.T) {
 	require.Equal(t, "hello world", got)
 }
 
+func TestCompactionEncryptDecrypt_FallbackKeyStableWithinProcess(t *testing.T) {
+	t.Setenv("SUB2API_COMPACTION_KEY", "")
+
+	svcA := &OpenAIGatewayService{}
+	svcB := &OpenAIGatewayService{}
+
+	token, err := svcA.encryptCompactionSummary("hello fallback key")
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+
+	got, err := svcB.decryptCompactionSummary(token)
+	require.NoError(t, err)
+	require.Equal(t, "hello fallback key", got)
+}
+
 func TestExpandCompactionIntoInstructions(t *testing.T) {
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{

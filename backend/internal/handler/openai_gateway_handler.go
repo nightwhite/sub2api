@@ -1191,22 +1191,27 @@ func (h *OpenAIGatewayHandler) Compact(c *gin.Context) {
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
 
-		go func(result *service.OpenAIForwardResult, usedAccount *service.Account, ua, ip string) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:        result,
 				APIKey:        apiKey,
 				User:          apiKey.User,
-				Account:       usedAccount,
+				Account:       account,
 				Subscription:  subscription,
-				UserAgent:     ua,
-				IPAddress:     ip,
+				UserAgent:     userAgent,
+				IPAddress:     clientIP,
 				APIKeyService: h.apiKeyService,
 			}); err != nil {
-				log.Printf("Record usage failed: %v", err)
+				logger.L().With(
+					zap.String("component", "handler.openai_gateway.compact"),
+					zap.Int64("user_id", subject.UserID),
+					zap.Int64("api_key_id", apiKey.ID),
+					zap.Any("group_id", apiKey.GroupID),
+					zap.String("model", reqModel),
+					zap.Int64("account_id", account.ID),
+				).Error("openai.compact_record_usage_failed", zap.Error(err))
 			}
-		}(result, account, userAgent, clientIP)
+		})
 		return
 	}
 }

@@ -18,11 +18,17 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
+)
+
+var (
+	compactionEphemeralKeyOnce sync.Once
+	compactionEphemeralKey     [32]byte
 )
 
 // Compact implements a "real" /v1/responses/compact behavior:
@@ -602,9 +608,7 @@ func (s *OpenAIGatewayService) compactionKey() ([]byte, error) {
 	}
 
 	// Last resort: generate per-process key (tokens won't survive restart).
-	sum := sha256.Sum256([]byte("sub2api:compaction:ephemeral:" + time.Now().UTC().Format(time.RFC3339Nano)))
-	log.Printf("Warning: compaction encryption key not configured; using ephemeral key (tokens won't survive restart)")
-	return sum[:], nil
+	return getCompactionEphemeralKey(), nil
 }
 
 func parse32ByteKey(v string) ([]byte, bool) {
@@ -626,4 +630,19 @@ func parse32ByteKey(v string) ([]byte, bool) {
 	}
 
 	return nil, false
+}
+
+func getCompactionEphemeralKey() []byte {
+	compactionEphemeralKeyOnce.Do(func() {
+		entropy := make([]byte, 32)
+		if _, err := io.ReadFull(rand.Reader, entropy); err != nil {
+			entropy = []byte(time.Now().UTC().Format(time.RFC3339Nano))
+			log.Printf("Warning: failed to read random bytes for compaction key, fallback to time entropy: %v", err)
+		}
+		compactionEphemeralKey = sha256.Sum256(append([]byte("sub2api:compaction:ephemeral:"), entropy...))
+		log.Printf("Warning: compaction encryption key not configured; using process-local ephemeral key (tokens won't survive restart)")
+	})
+
+	key := compactionEphemeralKey
+	return key[:]
 }
