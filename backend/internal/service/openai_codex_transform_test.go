@@ -183,14 +183,14 @@ func TestNormalizeCodexModel_Gpt53(t *testing.T) {
 
 func TestNormalizeCodexModel_Gpt54(t *testing.T) {
 	cases := map[string]string{
-		"gpt-5.4":              "gpt-5.4",
-		"gpt-5.4-high":         "gpt-5.4",
-		"gpt 5.4":              "gpt-5.4",
-		"gpt-5.4-codex":        "gpt-5.4-codex",
-		"gpt-5.4-codex-xhigh":  "gpt-5.4-codex",
-		"gpt 5.4 codex":        "gpt-5.4-codex",
-		"abc/gpt-5.4":          "gpt-5.4",
-		"abc/gpt-5.4-codex":    "gpt-5.4-codex",
+		"gpt-5.4":             "gpt-5.4",
+		"gpt-5.4-high":        "gpt-5.4",
+		"gpt 5.4":             "gpt-5.4",
+		"gpt-5.4-codex":       "gpt-5.4-codex",
+		"gpt-5.4-codex-xhigh": "gpt-5.4-codex",
+		"gpt 5.4 codex":       "gpt-5.4-codex",
+		"abc/gpt-5.4":         "gpt-5.4",
+		"abc/gpt-5.4-codex":   "gpt-5.4-codex",
 	}
 
 	for input, expected := range cases {

@@ -82,12 +82,6 @@ type codexTransformResult struct {
 	PromptCacheKey  string
 }
 
-type opencodeCacheMetadata struct {
-	ETag        string `json:"etag"`
-	LastFetch   string `json:"lastFetch,omitempty"`
-	LastChecked int64  `json:"lastChecked"`
-}
-
 func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompaction bool) codexTransformResult {
 	result := codexTransformResult{}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
