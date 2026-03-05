@@ -2624,6 +2624,12 @@ export default {
       urlCopied: '代理 URL 已复制',
       allProtocols: '全部协议',
       allStatus: '全部状态',
+      protocols: {
+        http: 'HTTP',
+        https: 'HTTPS',
+        socks5: 'SOCKS5',
+        socks5h: 'SOCKS5H（远程 DNS）'
+      },
       searchProxies: '搜索代理...',
       name: '名称',
       protocol: '协议',
