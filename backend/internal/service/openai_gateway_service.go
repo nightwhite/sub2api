@@ -1553,8 +1553,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		patchDisabled = true
 	}
 
+	requestPath := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	isCompaction := strings.Contains(requestPath, "/responses/compact")
 	// 非透传模式下，保持历史行为：非 Codex CLI 请求在 instructions 为空时注入默认指令。
-	if !isCodexCLI && isInstructionsEmpty(reqBody) {
+	// compact 端点会走独立指令逻辑，避免覆盖压缩语义。
+	if !isCompaction && !isCodexCLI && isInstructionsEmpty(reqBody) {
 		if instructions := strings.TrimSpace(GetOpenCodeInstructions()); instructions != "" {
 			reqBody["instructions"] = instructions
 			bodyModified = true
@@ -1594,8 +1600,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	// Expand /responses/compact tokens into instructions for OAuth accounts (ChatGPT internal API does not understand them).
 	if account.Type == AccountTypeOAuth {
-		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI)
+		if changed, err := s.expandCompactionIntoInstructions(reqBody); err != nil {
+			if c != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": gin.H{
+						"type":    "invalid_request_error",
+						"message": err.Error(),
+					},
+				})
+			}
+			return nil, err
+		} else if changed {
+			bodyModified = true
+		}
+	}
+
+	if account.Type == AccountTypeOAuth {
+		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI, isCompaction)
 		if codexResult.Modified {
 			bodyModified = true
 			disablePatch()
@@ -1880,7 +1903,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	// Build upstream request
-	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, requestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2557,7 +2580,14 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 	}
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, requestPath string) (*http.Request, error) {
+	if requestPath == "" {
+		if c != nil && c.Request != nil && c.Request.URL != nil {
+			requestPath = c.Request.URL.Path
+		}
+	}
+	isCompact := strings.Contains(requestPath, "/responses/compact")
+
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -2568,13 +2598,23 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL == "" {
-			targetURL = openaiPlatformAPIURL
+			// OpenAI platform base URL already contains "/v1/responses".
+			// When the client calls "/responses/compact", forward to "/v1/responses/compact".
+			if isCompact {
+				targetURL = openaiPlatformAPIURL + "/compact"
+			} else {
+				targetURL = openaiPlatformAPIURL
+			}
 		} else {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
 				return nil, err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			if isCompact {
+				targetURL = buildOpenAIResponsesCompactURL(validatedURL)
+			} else {
+				targetURL = buildOpenAIResponsesURL(validatedURL)
+			}
 		}
 	default:
 		targetURL = openaiPlatformAPIURL
@@ -3351,6 +3391,20 @@ func buildOpenAIResponsesURL(base string) string {
 		return normalized + "/responses"
 	}
 	return normalized + "/v1/responses"
+}
+
+func buildOpenAIResponsesCompactURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/responses/compact") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/responses") {
+		return normalized + "/compact"
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/responses/compact"
+	}
+	return normalized + "/v1/responses/compact"
 }
 
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {

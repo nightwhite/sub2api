@@ -50,6 +50,8 @@ func RegisterGatewayRoutes(
 		// OpenAI Responses API
 		gateway.POST("/responses", h.OpenAIGateway.Responses)
 		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
+		// OpenAI Responses Compact API
+		gateway.POST("/responses/compact", h.OpenAIGateway.Compact)
 		// 明确阻止旧协议入口：OpenAI 仅支持 Responses API，避免客户端误解为会自动路由到其它平台。
 		gateway.POST("/chat/completions", func(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -78,6 +80,8 @@ func RegisterGatewayRoutes(
 	// OpenAI Responses API（不带v1前缀的别名）
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.Responses)
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.ResponsesWebSocket)
+	// OpenAI Responses Compact API（不带v1前缀的别名）
+	r.POST("/responses/compact", bodyLimit, clientRequestID, opsErrorLogger, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.Compact)
 
 	// Antigravity 模型列表
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
