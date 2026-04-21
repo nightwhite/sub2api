@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "nightwhite",
+      "id": 22722256,
+      "comment_id": 4289091261,
+      "created_at": "2026-04-21T13:54:59Z",
+      "repoId": 1153325001,
+      "pullRequestNo": 3
+    }
+  ]
 }
