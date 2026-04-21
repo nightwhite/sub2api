@@ -314,6 +314,82 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsS
 	require.True(t, decision.StickySessionHit)
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyFallsBackWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10100)
+	accounts := []Account{
+		{
+			ID:          21101,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+		},
+		{
+			ID:          21102,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    9,
+		},
+	}
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:session_hash_sticky_busy_fallback": 21101,
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.StickySessionBusyFallbackEnabled = true
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
+	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 45 * time.Second
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+
+	concurrencyCache := stubConcurrencyCache{
+		acquireResults: map[int64]bool{
+			21101: false, // sticky 账号已满
+			21102: true,  // 回退负载均衡应命中该账号
+		},
+		loadMap: map[int64]*AccountLoadInfo{
+			21101: {AccountID: 21101, LoadRate: 90, WaitingCount: 9},
+			21102: {AccountID: 21102, LoadRate: 1, WaitingCount: 0},
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              cache,
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_hash_sticky_busy_fallback",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(21102), selection.Account.ID, "busy sticky account should fall back to load balancing when enabled")
+	require.True(t, selection.Acquired)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickySessionHit)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky_ForceHTTP(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1010)

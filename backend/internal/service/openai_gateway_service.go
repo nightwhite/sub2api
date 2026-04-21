@@ -1473,14 +1473,16 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 							return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 						}
 
-						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-						if waitingCount < cfg.StickySessionMaxWaiting {
-							return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-								AccountID:      accountID,
-								MaxConcurrency: account.Concurrency,
-								Timeout:        cfg.StickySessionWaitTimeout,
-								MaxWaiting:     cfg.StickySessionMaxWaiting,
-							})
+						if !cfg.StickySessionBusyFallbackEnabled {
+							waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
+							if waitingCount < cfg.StickySessionMaxWaiting {
+								return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+									AccountID:      accountID,
+									MaxConcurrency: account.Concurrency,
+									Timeout:        cfg.StickySessionWaitTimeout,
+									MaxWaiting:     cfg.StickySessionMaxWaiting,
+								})
+							}
 						}
 					}
 				}
@@ -1704,6 +1706,38 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 		return account, err
 	}
 	return account, nil
+}
+
+// IsAccountSchedulableNow re-checks whether a selected OpenAI account is still schedulable right now.
+// This is used by handlers while a request is queued waiting for an account concurrency slot.
+//
+// Note: For hot paths under queue pressure, we intentionally avoid an extra DB "runtime recheck" here.
+// The scheduler snapshot/cache is expected to be the freshest signal for rate limits / temp unschedulable
+// markers. DB recheck happens during selection; doing it repeatedly during waiting can overload DB.
+func (s *OpenAIGatewayService) IsAccountSchedulableNow(ctx context.Context, accountID int64, requestedModel string) (bool, string) {
+	if s == nil || accountID <= 0 {
+		return false, "invalid_account_id"
+	}
+	account, err := s.getSchedulableAccount(ctx, accountID)
+	if err != nil {
+		return false, "lookup_error"
+	}
+	if account == nil {
+		return false, "not_found"
+	}
+	if !account.IsOpenAI() {
+		return false, "not_openai"
+	}
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+		return false, "model_not_supported"
+	}
+	if !account.IsSchedulable() {
+		return false, "not_schedulable"
+	}
+	if remaining := account.GetRateLimitRemainingTimeWithContext(ctx, requestedModel); remaining > 0 {
+		return false, "model_rate_limited"
+	}
+	return true, ""
 }
 
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
