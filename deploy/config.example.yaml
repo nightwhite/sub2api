@@ -364,6 +364,18 @@ gateway:
     # Sticky session wait timeout (duration)
     # 粘性会话等待超时（时间段）
     sticky_session_wait_timeout: 120s
+    # When sticky session hits a busy account, allow falling back to load-balancing instead of waiting in queue
+    # 粘性会话命中但账号并发已满时，允许回退到负载均衡账号（不排队等粘性账号）
+    sticky_session_busy_fallback_enabled: false
+    # When waiting in queue for an account slot exceeds threshold, allow failover to re-schedule a new account
+    # 账号排队等待超过阈值时，允许触发重新选号（仅用于 session_hash / load_balance 层）
+    wait_timeout_failover_enabled: false
+    # Failover threshold while waiting in queue (duration)
+    # 等待触发重新选号的阈值（时间段）
+    wait_timeout_failover_after: 10s
+    # Max switches per request for wait-timeout failover, prevents infinite rescheduling loops
+    # 单请求“等待超时触发重选号”的最大切换次数，防止无限切号
+    wait_timeout_failover_max_switches: 1
     # Fallback wait timeout (duration)
     # 兜底排队等待超时（时间段）
     fallback_wait_timeout: 30s

@@ -139,6 +139,23 @@ const (
 	SSEPingFormatComment SSEPingFormat = ":\n\n"
 )
 
+// WaitAbortError indicates the caller wants to abort waiting (without treating it as a timeout).
+// Used by handlers to re-schedule a different account while a request is queued.
+type WaitAbortError struct {
+	Reason string
+}
+
+func (e *WaitAbortError) Error() string {
+	if e == nil {
+		return "wait aborted"
+	}
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		return "wait aborted"
+	}
+	return "wait aborted: " + reason
+}
+
 // ConcurrencyError represents a concurrency limit error with context
 type ConcurrencyError struct {
 	SlotType  string
@@ -215,6 +232,14 @@ func (h *ConcurrencyHelper) DecrementAccountWaitCount(ctx context.Context, accou
 	h.concurrencyService.DecrementAccountWaitCount(ctx, accountID)
 }
 
+// GetAccountWaitingCount returns current waiting count for an account.
+func (h *ConcurrencyHelper) GetAccountWaitingCount(ctx context.Context, accountID int64) (int, error) {
+	if h == nil || h.concurrencyService == nil {
+		return 0, nil
+	}
+	return h.concurrencyService.GetAccountWaitingCount(ctx, accountID)
+}
+
 // TryAcquireUserSlot 尝试立即获取用户并发槽位。
 // 返回值: (releaseFunc, acquired, error)
 func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (func(), bool, error) {
@@ -289,6 +314,22 @@ func (h *ConcurrencyHelper) waitForSlotWithPing(c *gin.Context, slotType string,
 
 // waitForSlotWithPingTimeout waits for a concurrency slot with a custom timeout.
 func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool) (func(), error) {
+	return h.waitForSlotWithPingTimeoutHook(c, slotType, id, maxConcurrency, timeout, isStream, streamStarted, tryImmediate, nil)
+}
+
+type waitForSlotAbortHook func(elapsed time.Duration) (abort bool, err error)
+
+func (h *ConcurrencyHelper) waitForSlotWithPingTimeoutHook(
+	c *gin.Context,
+	slotType string,
+	id int64,
+	maxConcurrency int,
+	timeout time.Duration,
+	isStream bool,
+	streamStarted *bool,
+	tryImmediate bool,
+	abortHook waitForSlotAbortHook,
+) (func(), error) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
@@ -297,6 +338,17 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 			return h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
 		}
 		return h.concurrencyService.AcquireAccountSlot(ctx, id, maxConcurrency)
+	}
+
+	startWait := time.Now()
+	if abortHook != nil {
+		abort, hookErr := abortHook(0)
+		if abort {
+			if hookErr == nil {
+				hookErr = &WaitAbortError{}
+			}
+			return nil, hookErr
+		}
 	}
 
 	if tryImmediate {
@@ -356,6 +408,15 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 			flusher.Flush()
 
 		case <-timer.C:
+			if abortHook != nil {
+				abort, hookErr := abortHook(time.Since(startWait))
+				if abort {
+					if hookErr == nil {
+						hookErr = &WaitAbortError{}
+					}
+					return nil, hookErr
+				}
+			}
 			// Try to acquire slot
 			result, err := acquireSlot()
 			if err != nil {
@@ -374,6 +435,21 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
 func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
 	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true)
+}
+
+// AcquireAccountSlotWithWaitTimeoutAndHook acquires an account slot with a custom timeout and an optional abort hook.
+// The hook is checked before the first attempt and before each retry tick; when it requests abort, the returned
+// error can be inspected by callers to decide whether to reschedule (e.g., *WaitAbortError).
+func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeoutAndHook(
+	c *gin.Context,
+	accountID int64,
+	maxConcurrency int,
+	timeout time.Duration,
+	isStream bool,
+	streamStarted *bool,
+	abortHook waitForSlotAbortHook,
+) (func(), error) {
+	return h.waitForSlotWithPingTimeoutHook(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true, abortHook)
 }
 
 // nextBackoff 计算下一次退避时间
