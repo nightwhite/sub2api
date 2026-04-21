@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -115,6 +116,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	waitTimeoutFailoverSwitchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
@@ -180,10 +182,38 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		schedulingModel := reqModel
+		if fallbackModel := strings.TrimSpace(c.GetString("openai_chat_completions_fallback_model")); fallbackModel != "" {
+			schedulingModel = fallbackModel
+		}
+		accountReleaseFunc, acquired, rescheduleReason := h.acquireResponsesAccountSlot(
+			c,
+			apiKey.GroupID,
+			sessionHash,
+			selection,
+			schedulingModel,
+			scheduleDecision.Layer,
+			waitTimeoutFailoverSwitchCount,
+			reqStream,
+			&streamStarted,
+			reqLog,
+		)
+		if rescheduleReason != "" {
+			h.gatewayService.RecordOpenAIAccountSwitch()
+			failedAccountIDs[account.ID] = struct{}{}
+			if rescheduleReason == "wait_timeout_failover" {
+				waitTimeoutFailoverSwitchCount++
+			}
+			reqLog.Info("openai_chat_completions.account_rescheduling",
+				zap.Int64("account_id", account.ID),
+				zap.String("schedule_layer", scheduleDecision.Layer),
+				zap.String("reason", rescheduleReason),
+				zap.Int("wait_timeout_failover_switch_count", waitTimeoutFailoverSwitchCount),
+			)
+			continue
+		}
 		if !acquired {
 			return
 		}
