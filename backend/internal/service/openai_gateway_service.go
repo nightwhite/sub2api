@@ -1886,14 +1886,16 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 // IsAccountSchedulableNow re-checks whether a selected OpenAI account is still schedulable right now.
 // This is used by handlers while a request is queued waiting for an account concurrency slot.
 //
-// Note: For hot paths under queue pressure, we intentionally avoid an extra DB "runtime recheck" here.
-// The scheduler snapshot/cache is expected to be the freshest signal for rate limits / temp unschedulable
-// markers. DB recheck happens during selection; doing it repeatedly during waiting can overload DB.
+// Note: For hot paths under queue pressure, this is cache-only. DB recheck happens during selection;
+// doing it repeatedly during waiting can overload DB.
 func (s *OpenAIGatewayService) IsAccountSchedulableNow(ctx context.Context, accountID int64, requestedModel string) (bool, string) {
 	if s == nil || accountID <= 0 {
 		return false, "invalid_account_id"
 	}
-	account, err := s.getSchedulableAccount(ctx, accountID)
+	if s.schedulerSnapshot == nil {
+		return false, "lookup_error"
+	}
+	account, err := s.schedulerSnapshot.GetCachedAccount(ctx, accountID)
 	if err != nil {
 		return false, "lookup_error"
 	}

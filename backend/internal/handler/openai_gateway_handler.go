@@ -1054,13 +1054,6 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	}
 
 	accountWaitCounted := waitErr == nil && canWait
-	waitingCount, waitingCountErr := h.concurrencyHelper.GetAccountWaitingCount(ctx, account.ID)
-	if waitingCountErr != nil {
-		reqLog.Debug("openai.account_waiting_count_fetch_failed",
-			zap.Int64("account_id", account.ID),
-			zap.Error(waitingCountErr),
-		)
-	}
 	releaseWait := func() {
 		if accountWaitCounted {
 			h.concurrencyHelper.DecrementAccountWaitCount(ctx, account.ID)
@@ -1073,11 +1066,19 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if h != nil && h.cfg != nil {
 		schedulingCfg = h.cfg.Gateway.Scheduling
 	}
+	allowQueuedReschedule := strings.TrimSpace(scheduleLayer) != "previous_response_id"
 	waitTimeoutFailoverEnabled := schedulingCfg.WaitTimeoutFailoverEnabled &&
 		waitTimeoutFailoverSwitchCount < schedulingCfg.WaitTimeoutFailoverMaxSwitches &&
 		schedulingCfg.WaitTimeoutFailoverAfter > 0 &&
-		strings.TrimSpace(scheduleLayer) != "previous_response_id"
+		allowQueuedReschedule
 	if accountWaitCounted {
+		waitingCount, waitingCountErr := h.concurrencyHelper.GetAccountWaitingCount(ctx, account.ID)
+		if waitingCountErr != nil {
+			reqLog.Debug("openai.account_waiting_count_fetch_failed",
+				zap.Int64("account_id", account.ID),
+				zap.Error(waitingCountErr),
+			)
+		}
 		reqLog.Info("openai.account_wait_started",
 			zap.Int64("account_id", account.ID),
 			zap.String("schedule_layer", scheduleLayer),
@@ -1104,7 +1105,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 				return true, &WaitAbortError{Reason: "wait_timeout_failover"}
 			}
 
-			if h == nil || h.gatewayService == nil {
+			if !allowQueuedReschedule || h == nil || h.gatewayService == nil {
 				return false, nil
 			}
 			if elapsed < nextSchedulableCheckAt {
