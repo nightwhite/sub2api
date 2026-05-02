@@ -73,6 +73,7 @@ func TestOpenAIGatewayHandler_AcquireResponsesAccountSlot_WaitTimeoutFailover(t 
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	h := &OpenAIGatewayHandler{
@@ -146,6 +147,7 @@ func TestOpenAIGatewayHandler_AcquireResponsesAccountSlot_NoWaitTimeoutFailoverF
 		nil,
 		nil,
 		cfg,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -234,6 +236,7 @@ func TestOpenAIGatewayHandler_AcquireResponsesAccountSlot_AbortWhenAccountBecome
 		nil,
 		nil,
 		cfg,
+		nil,
 		nil,
 		nil,
 		nil,

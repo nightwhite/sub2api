@@ -822,6 +822,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyFallsB
 		"gpt-5.1",
 		nil,
 		OpenAIUpstreamTransportAny,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
