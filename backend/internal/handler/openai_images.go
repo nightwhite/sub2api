@@ -121,6 +121,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	waitTimeoutFailoverSwitchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
@@ -170,7 +171,32 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
+		accountReleaseFunc, acquired, rescheduleReason := h.acquireResponsesAccountSlot(
+			c,
+			apiKey.GroupID,
+			sessionHash,
+			selection,
+			parsed.Model,
+			scheduleDecision.Layer,
+			waitTimeoutFailoverSwitchCount,
+			parsed.Stream,
+			&streamStarted,
+			reqLog,
+		)
+		if rescheduleReason != "" {
+			h.gatewayService.RecordOpenAIAccountSwitch()
+			failedAccountIDs[account.ID] = struct{}{}
+			if rescheduleReason == "wait_timeout_failover" {
+				waitTimeoutFailoverSwitchCount++
+			}
+			reqLog.Info("openai.images.account_rescheduling",
+				zap.Int64("account_id", account.ID),
+				zap.String("schedule_layer", scheduleDecision.Layer),
+				zap.String("reason", rescheduleReason),
+				zap.Int("wait_timeout_failover_switch_count", waitTimeoutFailoverSwitchCount),
+			)
+			continue
+		}
 		if !acquired {
 			return
 		}

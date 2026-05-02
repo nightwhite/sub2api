@@ -369,6 +369,11 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 
 	cfg := s.service.schedulingConfig()
+	// Sticky session is a best-effort hint for throughput-focused deployments.
+	// When enabled, a busy sticky account will fall through to load balancing rather than waiting in queue.
+	if cfg.StickySessionBusyFallbackEnabled {
+		return nil, nil
+	}
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	if s.service.concurrencyService != nil {
 		return &AccountSelectionResult{

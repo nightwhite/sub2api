@@ -160,6 +160,24 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	return s.accountRepo.GetByID(fallbackCtx, accountID)
 }
 
+func (s *SchedulerSnapshotService) GetCachedAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s == nil || accountID <= 0 {
+		return nil, nil
+	}
+	if s.cache == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	account, err := s.cache.GetAccount(ctx, accountID)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] account cache read failed: id=%d err=%v", accountID, err)
+		return nil, err
+	}
+	if account == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	return account, nil
+}
+
 // GetGroupByID 获取分组信息（供调度器使用）
 func (s *SchedulerSnapshotService) GetGroupByID(ctx context.Context, groupID int64) (*Group, error) {
 	if s.groupRepo == nil {
