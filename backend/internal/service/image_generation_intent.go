@@ -106,6 +106,41 @@ func openAIRequestBodyHasImageGenerationTool(body []byte) bool {
 	return openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools"))
 }
 
+func FilterOpenAIResponsesImageGenerationControls(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+
+	removed := false
+	rawTools, ok := reqBody["tools"]
+	if ok && rawTools != nil {
+		if tools, ok := rawTools.([]any); ok {
+			filtered := make([]any, 0, len(tools))
+			for _, rawTool := range tools {
+				toolMap, ok := rawTool.(map[string]any)
+				if ok && strings.TrimSpace(firstNonEmptyString(toolMap["type"])) == "image_generation" {
+					removed = true
+					continue
+				}
+				filtered = append(filtered, rawTool)
+			}
+			if removed {
+				if len(filtered) == 0 {
+					delete(reqBody, "tools")
+					delete(reqBody, "tool_choice")
+				} else {
+					reqBody["tools"] = filtered
+				}
+			}
+		}
+	}
+	if openAIAnyToolChoiceSelectsImageGeneration(reqBody["tool_choice"]) {
+		delete(reqBody, "tool_choice")
+		removed = true
+	}
+	return removed
+}
+
 func openAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return false
