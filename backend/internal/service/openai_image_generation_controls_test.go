@@ -100,6 +100,30 @@ func TestOpenAIGatewayServiceForward_DisabledGroupRemovesImageGenerationToolChoi
 	require.Equal(t, 0, result.ImageCount)
 }
 
+func TestFilterOpenAIResponsesImageGenerationControls_RemovesEmptyToolsAndToolChoice(t *testing.T) {
+	reqBody := map[string]any{
+		"model":       "gpt-5.4",
+		"input":       "search only",
+		"tools":       []any{map[string]any{"type": "image_generation"}},
+		"tool_choice": "auto",
+	}
+
+	modified := FilterOpenAIResponsesImageGenerationControls(reqBody)
+
+	require.True(t, modified)
+	require.NotContains(t, reqBody, "tools")
+	require.NotContains(t, reqBody, "tool_choice")
+}
+
+func TestMarshalOpenAIUpstreamJSON_DoesNotEscapeHTML(t *testing.T) {
+	body, err := MarshalOpenAIUpstreamJSON(map[string]any{
+		"input": "<div>&</div>",
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"<div>&</div>"`)
+}
+
 func TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
