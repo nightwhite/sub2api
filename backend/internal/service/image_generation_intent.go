@@ -125,7 +125,12 @@ func FilterOpenAIResponsesImageGenerationControls(reqBody map[string]any) bool {
 				filtered = append(filtered, rawTool)
 			}
 			if removed {
-				reqBody["tools"] = filtered
+				if len(filtered) == 0 {
+					delete(reqBody, "tools")
+					delete(reqBody, "tool_choice")
+				} else {
+					reqBody["tools"] = filtered
+				}
 			}
 		}
 	}

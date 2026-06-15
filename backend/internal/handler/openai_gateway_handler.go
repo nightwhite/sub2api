@@ -257,7 +257,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			return
 		}
 		if service.FilterOpenAIResponsesImageGenerationControls(reqBody) {
-			filteredBody, err := json.Marshal(reqBody)
+			filteredBody, err := service.MarshalOpenAIUpstreamJSON(reqBody)
 			if err != nil {
 				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 				return
