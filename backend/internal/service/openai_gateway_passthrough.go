@@ -101,20 +101,39 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	body = updatedBody
 
 	apiKey := getAPIKeyFromContext(c)
-	if IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
-		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": gin.H{
-				"type":    "permission_error",
-				"message": ImageGenerationPermissionMessage(),
-			},
-		})
-		return nil, errors.New("image generation disabled for group")
+	imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
+	if imageIntent && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
+		// 分组关闭生图时，先尝试剥离 image_generation 工具降级为普通文本请求，
+		// 避免客户端误带生图工具导致整次请求被拒。
+		if openAIRequestBodyHasImageGenerationTool(body) {
+			var reqBody map[string]any
+			if err := json.Unmarshal(body, &reqBody); err != nil {
+				return nil, err
+			}
+			if FilterOpenAIResponsesImageGenerationControls(reqBody) {
+				filteredBody, err := MarshalOpenAIUpstreamJSON(reqBody)
+				if err != nil {
+					return nil, fmt.Errorf("serialize request body: %w", err)
+				}
+				body = filteredBody
+				imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
+			}
+		}
+		if imageIntent {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": gin.H{
+					"type":    "permission_error",
+					"message": ImageGenerationPermissionMessage(),
+				},
+			})
+			return nil, errors.New("image generation disabled for group")
+		}
 	}
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""
-	if IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
+	if imageIntent {
 		var imageCfgErr error
 		imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, reqModel)
 		if imageCfgErr != nil {

@@ -242,6 +242,12 @@ func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
 	return out, nil
 }
 
+// MarshalOpenAIUpstreamJSON 是 marshalOpenAIUpstreamJSON 的导出版本，供 handler 层
+// 在剥离生图工具后重新序列化请求体使用（不转义 HTML 字符）。
+func MarshalOpenAIUpstreamJSON(v any) ([]byte, error) {
+	return marshalOpenAIUpstreamJSON(v)
+}
+
 func openAIUpstreamErrorBodyReadLimitForConfig(cfg *config.Config) int64 {
 	limit := openAIUpstreamErrorBodyReadLimit
 	if cfg != nil && cfg.Gateway.LogUpstreamErrorBody && cfg.Gateway.LogUpstreamErrorBodyMaxBytes > int(limit) {

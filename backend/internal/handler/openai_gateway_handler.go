@@ -260,8 +260,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	imageIntent := service.IsImageGenerationIntent("/v1/responses", reqModel, body)
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
-		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
-		return
+		// 分组关闭生图时，先尝试剥离 image_generation 工具降级为普通文本请求，
+		// 避免客户端误带生图工具导致整次请求被拒。
+		var reqBody map[string]any
+		if err := json.Unmarshal(body, &reqBody); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+			return
+		}
+		if service.FilterOpenAIResponsesImageGenerationControls(reqBody) {
+			filteredBody, err := service.MarshalOpenAIUpstreamJSON(reqBody)
+			if err != nil {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+				return
+			}
+			body = filteredBody
+			sessionHashBody = filteredBody
+			imageIntent = service.IsImageGenerationIntent("/v1/responses", reqModel, body)
+		}
+		if imageIntent {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
+			return
+		}
 	}
 	var imageReleaseFunc func()
 	if imageIntent {
