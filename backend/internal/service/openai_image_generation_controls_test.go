@@ -15,7 +15,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *testing.T) {
+func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// 仅生图模型（gpt-image-2）仍应被拒绝；带 image_generation tool 的请求会被
