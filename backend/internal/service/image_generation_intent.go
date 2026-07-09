@@ -39,6 +39,9 @@ func IsImageGenerationIntent(endpoint string, requestedModel string, body []byte
 	if openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools")) {
 		return true
 	}
+	if openAIJSONInputContainsImageGenTool(gjson.GetBytes(body, "input")) {
+		return true
+	}
 	return openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
 }
 
@@ -94,7 +97,48 @@ func openAIJSONToolsContainImageGeneration(tools gjson.Result) bool {
 			found = true
 			return false
 		}
+		if isImageGenNamespaceTool(item) {
+			found = true
+			return false
+		}
 		return true
+	})
+	return found
+}
+
+// isImageGenNamespaceTool detects the Codex namespace-style image generation
+// tool declaration: { "type": "namespace", "name": "image_gen", ... }.
+// Codex /image uses this instead of the flat { "type": "image_generation" }.
+func isImageGenNamespaceTool(tool gjson.Result) bool {
+	return openAIJSONString(tool.Get("type")) == "namespace" &&
+		openAIJSONString(tool.Get("name")) == "image_gen"
+}
+
+// openAIJSONInputContainsImageGenTool scans Responses input items for
+// additional_tools entries that declare the image_gen namespace. This covers
+// the "Responses Lite" format where tools are embedded inside input items
+// rather than top-level tools.
+func openAIJSONInputContainsImageGenTool(input gjson.Result) bool {
+	if !input.IsArray() {
+		return false
+	}
+	found := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if openAIJSONString(item.Get("type")) != "additional_tools" {
+			return true
+		}
+		tools := item.Get("tools")
+		if !tools.IsArray() {
+			return true
+		}
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if isImageGenNamespaceTool(tool) {
+				found = true
+				return false
+			}
+			return true
+		})
+		return !found
 	})
 	return found
 }
@@ -106,6 +150,11 @@ func openAIRequestBodyHasImageGenerationTool(body []byte) bool {
 	return openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools"))
 }
 
+// FilterOpenAIResponsesImageGenerationControls 从请求体移除 image_generation 工具及
+// 残留的 tool_choice，用于分组关闭生图时把误带生图工具的请求降级为普通文本请求。
+//
+// 返回 true 表示请求体被修改。移除后 tools 为空时同时删除 tools 和 tool_choice；
+// tool_choice 明确指向 image_generation 时也一并删除。
 func FilterOpenAIResponsesImageGenerationControls(reqBody map[string]any) bool {
 	if reqBody == nil {
 		return false
