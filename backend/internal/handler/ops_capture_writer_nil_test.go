@@ -22,12 +22,12 @@ func TestOpsCaptureWriter_NilInnerWriter_NoPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		n, err := w.Write([]byte("test"))
 		assert.Equal(t, 0, n)
-		assert.NoError(t, err)
+		assert.Error(t, err)
 	})
 	assert.NotPanics(t, func() {
 		n, err := w.WriteString("test")
 		assert.Equal(t, 0, n)
-		assert.NoError(t, err)
+		assert.Error(t, err)
 	})
 	assert.NotPanics(t, func() {
 		h := w.Header()
