@@ -150,6 +150,12 @@ func openAIRequestBodyHasImageGenerationDeclaration(body []byte) bool {
 		openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
 }
 
+// OpenAIRequestBodyHasImageGenerationDeclaration reports whether a raw OpenAI
+// /responses payload explicitly declares image-generation tools or choices.
+func OpenAIRequestBodyHasImageGenerationDeclaration(body []byte) bool {
+	return openAIRequestBodyHasImageGenerationDeclaration(body)
+}
+
 func openAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return false
