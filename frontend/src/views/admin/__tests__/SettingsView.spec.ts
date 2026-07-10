@@ -742,6 +742,35 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("submits OpenAI fast policy user IDs as positive unique integers", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_fast_policy_settings: {
+        rules: [
+          {
+            service_tier: "priority",
+            action: "filter",
+            scope: "apikey",
+            user_ids: [2, 0, 2, -1, "" as unknown as number, 3],
+            model_whitelist: [],
+          },
+        ],
+      },
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls[0]?.[0];
+    expect(payload.openai_fast_policy_settings.rules[0].user_ids).toEqual([
+      2,
+      3,
+    ]);
+  });
+
   it("updates provider enablement immediately and reloads providers", async () => {
     const provider = {
       id: 7,
