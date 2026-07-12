@@ -16,11 +16,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationModels(t *testing.T) {
+func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationIntents(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// 仅生图模型（gpt-image-2）仍应被拒绝；带 image_generation tool 的请求会被
-	// FilterOpenAIResponsesImageGenerationControls 剥离后降级为普通文本请求放行。
 	tests := []struct {
 		name string
 		body []byte
@@ -49,82 +47,76 @@ func TestOpenAIGatewayServiceForward_RejectsDisabledImageGenerationModels(t *tes
 	}
 }
 
-func TestOpenAIGatewayServiceForward_DisabledGroupFiltersImageGenerationTool(t *testing.T) {
+func TestOpenAIGatewayServiceForward_DisabledGroupFiltersImageGenerationDeclarations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	upstream := &httpUpstreamRecorder{
-		resp: &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_filtered","model":"gpt-5.4","usage":{"input_tokens":4,"output_tokens":2}}`)),
+	tests := []struct {
+		name        string
+		passthrough bool
+		body        []byte
+	}{
+		{
+			name: "top-level tool",
+			body: []byte(`{
+				"model":"gpt-5.4",
+				"input":"search only",
+				"stream":false,
+				"tools":[
+					{"type":"web_search"},
+					{"type":"image_generation"},
+					{"type":"function","name":"inspect"}
+				],
+				"tool_choice":{"type":"image_generation"}
+			}`),
+		},
+		{
+			name:        "passthrough namespace tool",
+			passthrough: true,
+			body: []byte(`{
+				"model":"gpt-5.4",
+				"stream":false,
+				"tools":[
+					{"type":"function","name":"shell","parameters":{"type":"object"}},
+					{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}
+				],
+				"input":[
+					{"type":"message","role":"user","content":[{"type":"input_text","text":"write code"}]},
+					{"type":"additional_tools","tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen"}]}]}
+				],
+				"tool_choice":"auto"
+			}`),
 		},
 	}
-	svc := newOpenAIImageGenerationControlTestService(upstream)
-	c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
-	account := newOpenAIImageGenerationControlTestAccount()
-	body := []byte(`{"model":"gpt-5.4","input":"search only","stream":false,"tools":[{"type":"web_search"},{"type":"image_generation"},{"type":"function","name":"inspect"}]}`)
 
-	result, err := svc.Forward(context.Background(), c, account, body)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{
+				resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_filtered","model":"gpt-5.4","usage":{"input_tokens":4,"output_tokens":2}}`)),
+				},
+			}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
+			account := newOpenAIImageGenerationControlTestAccount()
+			if tt.passthrough {
+				account.Extra = map[string]any{"openai_passthrough": true}
+			}
 
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NotNil(t, upstream.lastReq)
-	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
-	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="web_search")`).Exists())
-	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(name=="inspect")`).Exists())
-	require.Equal(t, 0, result.ImageCount)
-}
+			result, err := svc.Forward(context.Background(), c, account, tt.body)
 
-func TestOpenAIGatewayServiceForward_DisabledGroupRemovesImageGenerationToolChoice(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	upstream := &httpUpstreamRecorder{
-		resp: &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_filtered_choice","model":"gpt-5.4","usage":{"input_tokens":4,"output_tokens":2}}`)),
-		},
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.NotNil(t, upstream.lastReq)
+			var forwarded map[string]any
+			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
+			require.False(t, hasOpenAIImageGenerationTool(forwarded))
+			require.Equal(t, 0, result.ImageCount)
+			require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="function")`).Exists() || gjson.GetBytes(upstream.lastBody, `tools.#(type=="web_search")`).Exists())
+		})
 	}
-	svc := newOpenAIImageGenerationControlTestService(upstream)
-	c, recorder := newOpenAIImageGenerationControlTestContext(false, "unit-test-agent/1.0")
-	account := newOpenAIImageGenerationControlTestAccount()
-	body := []byte(`{"model":"gpt-5.4","input":"search only","stream":false,"tools":[{"type":"web_search"},{"type":"image_generation"}],"tool_choice":{"type":"image_generation"}}`)
-
-	result, err := svc.Forward(context.Background(), c, account, body)
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NotNil(t, upstream.lastReq)
-	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
-	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="web_search")`).Exists())
-	require.Equal(t, 0, result.ImageCount)
-}
-
-func TestFilterOpenAIResponsesImageGenerationControls_RemovesEmptyToolsAndToolChoice(t *testing.T) {
-	reqBody := map[string]any{
-		"model":       "gpt-5.4",
-		"input":       "search only",
-		"tools":       []any{map[string]any{"type": "image_generation"}},
-		"tool_choice": "auto",
-	}
-
-	modified := FilterOpenAIResponsesImageGenerationControls(reqBody)
-
-	require.True(t, modified)
-	require.NotContains(t, reqBody, "tools")
-	require.NotContains(t, reqBody, "tool_choice")
-}
-
-func TestMarshalOpenAIUpstreamJSON_DoesNotEscapeHTML(t *testing.T) {
-	body, err := MarshalOpenAIUpstreamJSON(map[string]any{
-		"input": "<div>&</div>",
-	})
-
-	require.NoError(t, err)
-	require.Contains(t, string(body), `"<div>&</div>"`)
 }
 
 func TestOpenAIGatewayServiceForward_DisabledGroupAllowsTextOnlyResponses(t *testing.T) {

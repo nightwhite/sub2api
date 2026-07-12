@@ -190,14 +190,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 	}
 	if imageIntent && !imageGenerationAllowed {
-		// 分组关闭生图时，先尝试剥离 image_generation 工具降级为普通文本请求，
-		// 避免客户端误带生图工具导致整次请求被拒。strip 策略分支已在上方处理过。
-		if codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip && openAIRequestBodyHasImageGenerationTool(body) {
+		if openAIRequestBodyHasImageGenerationDeclaration(body) {
 			decoded, decodeErr := ensureReqBody()
 			if decodeErr != nil {
 				return nil, decodeErr
 			}
-			if FilterOpenAIResponsesImageGenerationControls(decoded) {
+			if stripOpenAIImageGenerationTools(decoded) {
 				markDecodedModified()
 				imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, decoded)
 			}

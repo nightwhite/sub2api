@@ -102,18 +102,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	apiKey := getAPIKeyFromContext(c)
 	imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 	if imageIntent && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
-		// 分组关闭生图时，先尝试剥离 image_generation 工具降级为普通文本请求，
-		// 避免客户端误带生图工具导致整次请求被拒。
-		if openAIRequestBodyHasImageGenerationTool(body) {
-			var reqBody map[string]any
-			if err := json.Unmarshal(body, &reqBody); err != nil {
-				return nil, err
+		if openAIRequestBodyHasImageGenerationDeclaration(body) {
+			filteredBody, changed, stripErr := stripOpenAIImageGenerationToolsFromRawPayload(body)
+			if stripErr != nil {
+				return nil, stripErr
 			}
-			if FilterOpenAIResponsesImageGenerationControls(reqBody) {
-				filteredBody, err := MarshalOpenAIUpstreamJSON(reqBody)
-				if err != nil {
-					return nil, fmt.Errorf("serialize request body: %w", err)
-				}
+			if changed {
 				body = filteredBody
 				imageIntent = IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 			}
