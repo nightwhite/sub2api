@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -23,13 +24,42 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ImageIntentPreservesGateAndBilli
 		account := newOpenAIImageGenerationControlTestAccount()
 		account.Extra = map[string]any{"openai_passthrough": true}
 
-		result, err := svc.Forward(context.Background(), c, account, body)
+		// 模型名直接命中的生图意图无法通过剥离工具消除，必须在到达上游前 403。
+		modelIntentBody := []byte(`{"model":"gpt-image-2","stream":false,"input":"draw"}`)
+		result, err := svc.Forward(context.Background(), c, account, modelIntentBody)
 
 		require.Error(t, err)
 		require.Nil(t, result)
 		require.Equal(t, http.StatusForbidden, recorder.Code)
 		require.Equal(t, "permission_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 		require.Nil(t, upstream.lastReq)
+	})
+
+	t.Run("disabled group strips image tool and forwards", func(t *testing.T) {
+		// fork 生图过滤语义：工具声明触发的意图先剥离生图工具再放行，
+		// 非生图部分请求不受禁用分组影响。
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"resp_stripped","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":2}}`,
+			)),
+		}}
+		svc := newOpenAIImageGenerationControlTestService(upstream)
+		c, recorder := newOpenAIImageGenerationControlTestContext(false, "curl/8.0")
+		account := newOpenAIImageGenerationControlTestAccount()
+		account.Extra = map[string]any{"openai_passthrough": true}
+
+		result, err := svc.Forward(context.Background(), c, account, body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.NotNil(t, upstream.lastReq)
+		require.Equal(t, 0, result.ImageCount)
+		var forwarded map[string]any
+		require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
+		require.False(t, hasOpenAIImageGenerationTool(forwarded), "image tool must be stripped before upstream")
 	})
 
 	t.Run("allowed group keeps image billing", func(t *testing.T) {

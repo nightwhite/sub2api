@@ -242,6 +242,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 			if changed {
 				body = filteredBody
+				// 剥离属于 attempt 级 body 改写，须置失效标记让重判走改写后的
+				// body，而非请求级 canonical hint（与 compact 模型改写同规则）。
+				attemptImageIntentInvalidated = true
 				imageIntent = resolveOpenAIPassthroughImageIntent(
 					c,
 					reqModel,
