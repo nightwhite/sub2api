@@ -30,7 +30,9 @@ func TestOpenAIGatewayHandlerResponses_GrokResponsesLiteImageToolDeclarationBypa
 }
 
 func TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected(t *testing.T) {
-	tests := []struct {
+	// fork 生图过滤语义：工具/声明类生图信号由入口剥离逻辑接管（剥离后放行，
+	// 不会 403）；只有模型名直接命中的意图无法剥离、必须 403 拒绝。
+	toolDeclarationCases := []struct {
 		name     string
 		platform string
 		body     string
@@ -50,21 +52,24 @@ func TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected(t
 			platform: service.PlatformOpenAI,
 			body:     `{"model":"gpt-5.5","tools":[{"type":"image_generation","model":"gpt-image-2"}],"input":"draw a cat"}`,
 		},
-		{
-			name:     "OpenAI image model",
-			platform: service.PlatformOpenAI,
-			body:     `{"model":"gpt-image-2","input":"draw a cat"}`,
-		},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range toolDeclarationCases {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := runOpenAIResponsesImagePermissionGateTest(t, tt.platform, tt.body)
 
-			require.Equal(t, http.StatusForbidden, rec.Code)
-			require.Contains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
+			require.NotEqual(t, http.StatusForbidden, rec.Code,
+				"tool declarations are stripped by the fork image filter, not rejected")
+			require.NotContains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
 		})
 	}
+
+	t.Run("OpenAI image model", func(t *testing.T) {
+		rec := runOpenAIResponsesImagePermissionGateTest(t, service.PlatformOpenAI, `{"model":"gpt-image-2","input":"draw a cat"}`)
+
+		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Contains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
+	})
 }
 
 func TestOpenAIGatewayHandlerResponses_PassiveNamespaceDoesNotTrigger403(t *testing.T) {
