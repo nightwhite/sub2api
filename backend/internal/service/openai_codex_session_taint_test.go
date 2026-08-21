@@ -240,11 +240,12 @@ func TestFilterCodexInput_TaintDisabledUnchanged(t *testing.T) {
 		map[string]any{"type": "function_call_output", "call_id": "fc_call1", "output": "ok"},
 	}
 	out := filterCodexInputWithOptions(input, codexInputFilterOptions{PreserveReferences: true})
-	require.Equal(t, "msg_old1", out[0].(map[string]any)["id"])
-	_, hasRS := out[1].(map[string]any)["id"]
+	require.Equal(t, "msg_old1", asCodexTaintMap(t, out[0])["id"])
+	_, hasRS := asCodexTaintMap(t, out[1])["id"]
 	require.False(t, hasRS, "historical rs_* strip unaffected")
-	require.Equal(t, "fc_old1", out[2].(map[string]any)["id"])
-	require.Equal(t, "fc_call1", out[2].(map[string]any)["call_id"])
+	fc := asCodexTaintMap(t, out[2])
+	require.Equal(t, "fc_old1", fc["id"])
+	require.Equal(t, "fc_call1", fc["call_id"])
 }
 
 // TestApplyCodexOAuthTransform_TaintPromptCacheKey covers the top-level
@@ -323,7 +324,7 @@ func TestApplyCodexTaintHeaders(t *testing.T) {
 	require.NotEqual(t, "turn-old", meta["turn_id"])
 	require.NotEqual(t, "inst-old", meta["installation_id"])
 	require.NotEqual(t, "sess-old:0", meta["window_id"])
-	require.Equal(t, "x", meta["git"].(map[string]any)["remote_url"], "unrelated fields kept verbatim")
+	require.Equal(t, "x", asCodexTaintMap(t, meta["git"])["remote_url"], "unrelated fields kept verbatim")
 }
 
 // TestApplyCodexTaintHeaders_InvalidMetadata pins the fail-closed rule: an
@@ -374,7 +375,9 @@ func TestApplyCodexTaintClientMetadata(t *testing.T) {
 	require.NotEqual(t, "inst-old", cm["x-codex-installation-id"])
 
 	var meta map[string]any
-	require.NoError(t, json.Unmarshal([]byte(cm["x-codex-turn-metadata"].(string)), &meta))
+	turnMetadata, ok := cm["x-codex-turn-metadata"].(string)
+	require.True(t, ok, "client_metadata.x-codex-turn-metadata must be a string")
+	require.NoError(t, json.Unmarshal([]byte(turnMetadata), &meta))
 	require.Equal(t, cm["session_id"], meta["session_id"], "embedded metadata matches top-level session_id")
 	require.Equal(t, "0.146.0", meta["cli_version"], "unrelated fields kept")
 
@@ -389,7 +392,7 @@ func TestApplyCodexTaintClientMetadata(t *testing.T) {
 		"client_metadata": map[string]any{"session_id": "sess-old"},
 	}
 	require.NoError(t, applyCodexTaintClientMetadata(newSessionTaintTestContext(t, 7, "x"), plain, &Account{ID: 42}, 7))
-	require.Equal(t, "sess-old", plain["client_metadata"].(map[string]any)["session_id"])
+	require.Equal(t, "sess-old", asCodexTaintMap(t, plain["client_metadata"])["session_id"])
 }
 
 // TestTrackOpenAICodexSessionAttemptForTaint covers the handler-facing tracker:
