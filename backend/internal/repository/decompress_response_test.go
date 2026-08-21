@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,22 @@ func TestDecompressResponseBodyZstdUsage(t *testing.T) {
 	require.Empty(t, resp.Header.Get("Content-Length"))
 	require.Equal(t, int64(-1), resp.ContentLength)
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestDecompressResponseBodyZstdCloseReleasesDecoder(t *testing.T) {
+	payload := []byte(`{"ok":true}`)
+	compressed := compressZstd(t, payload)
+	resp := newEncodedResponse("zstd", compressed)
+
+	decompressResponseBody(resp)
+
+	_, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	_, err = resp.Body.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.True(t, errors.Is(err, zstd.ErrDecoderClosed), "expected zstd decoder to be closed, got %v", err)
 }
 
 func TestDecompressResponseBodyExistingEncodings(t *testing.T) {

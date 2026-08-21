@@ -233,14 +233,36 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		IsImageGenerationIntent,
 	)
 	if imageIntent && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
-		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": gin.H{
-				"type":    "permission_error",
-				"message": ImageGenerationPermissionMessage(),
-			},
-		})
-		return nil, errors.New("image generation disabled for group")
+		// fork 生图过滤：禁用分组先尝试剥离请求中的生图工具声明，
+		// 剥离成功则放行（非生图请求不受影响），仍带生图意图才拒绝。
+		if openAIRequestBodyHasImageGenerationDeclaration(body) {
+			filteredBody, changed, stripErr := stripOpenAIImageGenerationToolsFromRawPayload(body)
+			if stripErr != nil {
+				return nil, stripErr
+			}
+			if changed {
+				body = filteredBody
+				imageIntent = resolveOpenAIPassthroughImageIntent(
+					c,
+					reqModel,
+					canonicalImageIntentBody,
+					policyModel,
+					body,
+					attemptImageIntentInvalidated,
+					IsImageGenerationIntent,
+				)
+			}
+		}
+		if imageIntent {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": gin.H{
+					"type":    "permission_error",
+					"message": ImageGenerationPermissionMessage(),
+				},
+			})
+			return nil, errors.New("image generation disabled for group")
+		}
 	}
 	imageBillingModel := ""
 	imageSizeTier := ""

@@ -11422,14 +11422,12 @@ async function saveSettings() {
             .map((p) => p.trim())
             .filter((p) => p !== "");
           const hasWhitelist = whitelist.length > 0;
+          const userIDs = normalizeOpenAIFastPolicyUserIDs(rule.user_ids);
           return {
             service_tier: rule.service_tier,
             action: rule.action,
             scope: rule.scope,
-            user_ids:
-              rule.user_ids && rule.user_ids.length > 0
-                ? [...rule.user_ids]
-                : undefined,
+            user_ids: userIDs.length > 0 ? userIDs : undefined,
             error_message:
               rule.action === "block" ? rule.error_message : undefined,
             model_whitelist: hasWhitelist ? whitelist : undefined,
@@ -12060,6 +12058,24 @@ const openaiFastPolicyScopeOptions = computed(() => [
     label: t("admin.settings.openaiFastPolicy.scopeBedrock"),
   },
 ]);
+
+function normalizeOpenAIFastPolicyUserIDs(userIDs?: number[]): number[] {
+  const seen = new Set<number>();
+  const normalized: number[] = [];
+  for (const userID of (userIDs ?? []) as unknown[]) {
+    if (
+      typeof userID !== "number" ||
+      !Number.isInteger(userID) ||
+      userID <= 0 ||
+      seen.has(userID)
+    ) {
+      continue;
+    }
+    seen.add(userID);
+    normalized.push(userID);
+  }
+  return normalized;
+}
 
 function addOpenAIFastPolicyRule() {
   openaiFastPolicyForm.rules.push({

@@ -412,8 +412,22 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 分组中所有 Codex 请求被 403（#4447），并误占生图并发槽位。
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
-		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
-		return
+		if service.OpenAIRequestBodyHasImageGenerationDeclaration(body) {
+			filteredBody, changed, err := service.StripOpenAIImageGenerationToolsFromRawPayload(body)
+			if err != nil {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+				return
+			}
+			if changed {
+				body = filteredBody
+				sessionHashBody = filteredBody
+				imageIntent = service.IsImageGenerationIntent("/v1/responses", reqModel, body)
+			}
+		}
+		if imageIntent {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
+			return
+		}
 	}
 	var imageReleaseFunc func()
 	if imageIntent {
