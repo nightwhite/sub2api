@@ -165,22 +165,22 @@ type SystemSettings struct {
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
 
-	DefaultConcurrency           int
-	DefaultBalance               float64
-	RiskControlEnabled           bool
-	CyberSessionBlockEnabled       bool
-	CyberSessionBlockTTLSeconds    int
+	DefaultConcurrency          int
+	DefaultBalance              float64
+	RiskControlEnabled          bool
+	CyberSessionBlockEnabled    bool
+	CyberSessionBlockTTLSeconds int
 	// CodexSessionSwitchPurificationEnabled: 会话跨账号切换后将请求中的
 	// 可关联 id 确定性改写为新账号下的映射值(默认关)。
 	CodexSessionSwitchPurificationEnabled bool
-	AffiliateEnabled             bool
-	AffiliateRebateRate          float64
-	AffiliateRebateFreezeHours   int
-	AffiliateRebateDurationDays  int
-	AffiliateRebatePerInviteeCap float64
-	AdminRechargeRebateEnabled   bool
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
+	AffiliateEnabled                      bool
+	AffiliateRebateRate                   float64
+	AffiliateRebateFreezeHours            int
+	AffiliateRebateDurationDays           int
+	AffiliateRebatePerInviteeCap          float64
+	AdminRechargeRebateEnabled            bool
+	DefaultUserRPMLimit                   int
+	DefaultSubscriptions                  []DefaultSubscriptionSetting
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

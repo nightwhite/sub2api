@@ -196,29 +196,37 @@ func TestFilterCodexInput_TaintRekey(t *testing.T) {
 	})
 	require.Len(t, out, 6, "item_reference dropped")
 
-	msg := out[0].(map[string]any)
+	msg := asCodexTaintMap(t, out[0])
 	require.Equal(t, rekeyCodexTaintID(9, "msg_old1"), msg["id"])
 	require.NotEqual(t, "msg_old1", msg["id"])
 
-	rsEnc := out[1].(map[string]any)
+	rsEnc := asCodexTaintMap(t, out[1])
 	require.Equal(t, rekeyCodexTaintID(9, "rs_old1"), rsEnc["id"], "reasoning with ciphertext keeps a rekeyed id")
 	require.Equal(t, "ENC", rsEnc["encrypted_content"], "ciphertext verbatim")
 
-	rsPlain := out[2].(map[string]any)
+	rsPlain := asCodexTaintMap(t, out[2])
 	_, hasID := rsPlain["id"]
 	require.False(t, hasID, "reasoning without ciphertext keeps the historical strip behavior")
 
-	fc := out[3].(map[string]any)
+	fc := asCodexTaintMap(t, out[3])
 	require.Equal(t, rekeyCodexTaintID(9, "fc_old1"), fc["id"])
 	rekeyedCall := rekeyCodexTaintID(9, "fc_call1")
 	require.Equal(t, rekeyedCall, fc["call_id"])
 
-	fco := out[4].(map[string]any)
+	fco := asCodexTaintMap(t, out[4])
 	require.Equal(t, rekeyedCall, fco["call_id"], "call/output pairing survives rekeying")
 
-	legacy := out[5].(map[string]any)
+	legacy := asCodexTaintMap(t, out[5])
 	_, hasID = legacy["id"]
 	require.False(t, hasID, "legacy unprefixed id dropped")
+}
+
+// asCodexTaintMap 是双值类型断言的测试助手（errcheck check-type-assertions）。
+func asCodexTaintMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	require.True(t, ok, "expected map[string]any item, got %T", v)
+	return m
 }
 
 // TestFilterCodexInput_TaintDisabledUnchanged pins the default behavior:
@@ -358,7 +366,7 @@ func TestApplyCodexTaintClientMetadata(t *testing.T) {
 	}
 	require.NoError(t, applyCodexTaintClientMetadata(c, body, &Account{ID: 42}, 7))
 
-	cm := body["client_metadata"].(map[string]any)
+	cm := asCodexTaintMap(t, body["client_metadata"])
 	require.NotEqual(t, "sess-old", cm["session_id"])
 	require.Equal(t, cm["session_id"], cm["thread_id"], "session==thread equality kept")
 	require.NotEqual(t, "turn-old", cm["turn_id"])
