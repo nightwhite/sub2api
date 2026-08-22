@@ -480,6 +480,15 @@ type GatewayCache interface {
 	// Delete sticky session binding, used to proactively clean up when account becomes unavailable
 	DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error
 
+	// NoteCodexSessionTaint 原子记录 Codex 会话→账号溯源并返回记录后状态：
+	// 首次见到的账号记为首账号（并发下 SETNX 语义），不同账号单向置位
+	// everSwitched，TTL 每次续期。返回该会话是否曾被多个账号服务过。
+	// Redis 实现保证多副本共享同一份溯源（openai_codex_session_taint.go）。
+	NoteCodexSessionTaint(ctx context.Context, seed string, accountID int64, ttl time.Duration) (bool, error)
+	// IsCodexSessionTainted 只读查询会话是否曾被多个账号服务过；未记录返回
+	// (false, nil)。
+	IsCodexSessionTainted(ctx context.Context, seed string) (bool, error)
+
 	// Grok async video billing snapshot (create → status success).
 	// SetGrokVideoPendingBilling stores create-time model/duration/resolution for status billing.
 	SetGrokVideoPendingBilling(ctx context.Context, key string, payload []byte, ttl time.Duration) error

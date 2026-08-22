@@ -16,6 +16,81 @@ import (
 
 const stickySessionPrefix = "sticky_session:"
 const liveCallPrefix = "live:call:"
+const codexTaintPrefix = "codex_taint:"
+
+// noteCodexTaintScript 原子完成"记录溯源 + 查询是否切过号"（read-modify-write）：
+// 首次写入用首账号（天然 SETNX 语义）；已存在时异账号单向置位 everSwitched；
+// 每次调用续 TTL。值编码为 "<first>|<switched:0|1>"。跨副本并发安全——
+// 同一会话两个副本同时记录不同账号，恰好一个赢得首账号，另一个置位切换。
+var noteCodexTaintScript = redis.NewScript(`
+local key = KEYS[1]
+local account = ARGV[1]
+local ttl = tonumber(ARGV[2])
+local val = redis.call('GET', key)
+local first, switched
+if val then
+  local bar = string.find(val, '|', 1, true)
+  first = string.sub(val, 1, bar - 1)
+  switched = string.sub(val, bar + 1) == '1'
+  if first ~= account then
+    switched = true
+  end
+else
+  first = account
+  switched = false
+end
+local flag = '0'
+if switched then
+  flag = '1'
+end
+redis.call('SET', key, first .. '|' .. flag, 'EX', ttl)
+return first .. '|' .. flag
+`)
+
+// buildCodexTaintKey 用 seed 的 SHA-256 作键：seed 含 API Key ID 与客户端原始
+// 会话标识（内含 NUL 分隔符），哈希后得到跨副本一致且对 Redis 友好的键。
+func buildCodexTaintKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("%s%s", codexTaintPrefix, hex.EncodeToString(sum[:]))
+}
+
+// parseCodexTaintValue 解析 "<first>|<switched>" 编码，异常形态按未切换处理。
+func parseCodexTaintValue(val string) bool {
+	bar := strings.IndexByte(val, '|')
+	if bar <= 0 || bar == len(val)-1 {
+		return false
+	}
+	return val[bar+1:] == "1"
+}
+
+func (c *gatewayCache) NoteCodexSessionTaint(ctx context.Context, seed string, accountID int64, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(seed) == "" || accountID <= 0 {
+		return false, nil
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	res, err := noteCodexTaintScript.Run(ctx, c.rdb, []string{buildCodexTaintKey(seed)},
+		strconv.FormatInt(accountID, 10), int(ttl.Seconds())).Text()
+	if err != nil {
+		return false, err
+	}
+	return parseCodexTaintValue(res), nil
+}
+
+func (c *gatewayCache) IsCodexSessionTainted(ctx context.Context, seed string) (bool, error) {
+	if strings.TrimSpace(seed) == "" {
+		return false, nil
+	}
+	val, err := c.rdb.Get(ctx, buildCodexTaintKey(seed)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		return false, err
+	}
+	return parseCodexTaintValue(val), nil
+}
 
 type gatewayCache struct {
 	rdb *redis.Client

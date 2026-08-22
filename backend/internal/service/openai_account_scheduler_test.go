@@ -151,6 +151,12 @@ type schedulerTestGatewayCache struct {
 	deletedSessions map[string]int
 }
 
+func (c *schedulerTestGatewayCache) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (c *schedulerTestGatewayCache) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (c *schedulerTestGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil

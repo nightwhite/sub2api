@@ -246,6 +246,12 @@ type mockGatewayCacheForPlatform struct {
 	deletedSessions map[string]int
 }
 
+func (m *mockGatewayCacheForPlatform) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (m *mockGatewayCacheForPlatform) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (m *mockGatewayCacheForPlatform) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := m.sessionBindings[sessionHash]; ok {
 		return id, nil
