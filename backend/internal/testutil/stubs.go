@@ -91,6 +91,12 @@ var _ service.GatewayCache = StubGatewayCache{}
 
 type StubGatewayCache struct{}
 
+func (c StubGatewayCache) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (c StubGatewayCache) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (c StubGatewayCache) GetSessionAccountID(_ context.Context, _ int64, _ string) (int64, error) {
 	return 0, nil
 }
