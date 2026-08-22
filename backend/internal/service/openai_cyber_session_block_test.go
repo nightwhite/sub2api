@@ -155,6 +155,12 @@ func (c *comboCacheAndStore) GetReasoningContent(_ context.Context, _ string) (s
 	return "", ErrReasoningContentNotFound
 }
 
+func (c *comboCacheAndStore) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (c *comboCacheAndStore) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (c *comboCacheAndStore) SetCyberSessionBlocked(ctx context.Context, key string, ttl time.Duration) error {
 	return c.store.SetCyberSessionBlocked(ctx, key, ttl)
 }

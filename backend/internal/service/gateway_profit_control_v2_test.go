@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -469,6 +470,12 @@ type sentinelMissGatewayCache struct {
 	*mockGatewayCacheForPlatform
 }
 
+func (c *sentinelMissGatewayCache) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (c *sentinelMissGatewayCache) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (c *sentinelMissGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil

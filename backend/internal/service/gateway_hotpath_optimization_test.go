@@ -124,6 +124,12 @@ type stickyGatewayCacheHotpathStub struct {
 	getCalls atomic.Int64
 }
 
+func (s *stickyGatewayCacheHotpathStub) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (s *stickyGatewayCacheHotpathStub) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (s *stickyGatewayCacheHotpathStub) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	s.getCalls.Add(1)
 	if s.stickyID > 0 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -88,18 +89,32 @@ type openAICodexSessionTaint struct {
 // 即使该 attempt 的响应随后被 failover 丢弃，上游账本也已看到这次请求的
 // 会话标识）。首次见到的账号记为 firstAccountID；不同账号出现即置
 // everSwitched（单向）。TTL 与 WS 会话粘性一致，活跃会话持续续期。
-func (s *OpenAIGatewayService) noteOpenAICodexSessionAttempt(c *gin.Context, account *Account) {
+// 返回记录后该会话是否已被多个账号服务过（供 Track 判定净化）。
+//
+// 存储：Redis 优先（GatewayCache.NoteCodexSessionTaint，Lua 原子
+// read-modify-write）——多副本共享同一份溯源，任一副本观察到切号全副本生效；
+// Redis 不可用或未注入时降级为进程内 sync.Map（单实例语义不变）。
+func (s *OpenAIGatewayService) noteOpenAICodexSessionAttempt(c *gin.Context, account *Account) bool {
 	if s == nil || account == nil || account.ID <= 0 {
-		return
+		return false
 	}
 	seed := openAICodexTurnStateSeed(c)
 	if seed == "" {
-		return
+		return false
 	}
 	now := time.Now()
 	ttl := s.openAIWSSessionStickyTTL()
 	if ttl <= 0 {
 		ttl = time.Hour
+	}
+
+	if s.cache != nil {
+		switched, err := s.cache.NoteCodexSessionTaint(taintRequestContext(c), seed, account.ID, ttl)
+		if err == nil {
+			return switched
+		}
+		slog.Warn("codex session taint redis note failed, falling back to in-memory",
+			"error", err)
 	}
 
 	raw, loaded := s.openaiCodexSessionTaints.LoadOrStore(seed, openAICodexSessionTaint{
@@ -116,18 +131,30 @@ func (s *OpenAIGatewayService) noteOpenAICodexSessionAttempt(c *gin.Context, acc
 			if next != t {
 				s.openaiCodexSessionTaints.Store(seed, next)
 			}
-		} else {
-			// 类型异常的残留记录直接重建，防止永久污染。
-			s.openaiCodexSessionTaints.Store(seed, openAICodexSessionTaint{
-				firstAccountID: account.ID,
-				expiresAt:      now.Add(ttl),
-			})
+			s.sweepOpenAICodexSessionTaints()
+			return next.everSwitched
 		}
+		// 类型异常的残留记录直接重建，防止永久污染。
+		s.openaiCodexSessionTaints.Store(seed, openAICodexSessionTaint{
+			firstAccountID: account.ID,
+			expiresAt:      now.Add(ttl),
+		})
 	}
 	s.sweepOpenAICodexSessionTaints()
+	return false
+}
+
+// taintRequestContext 返回记录用的 context：gin 请求 context 缺失时退回
+// background，避免热路径上 nil panic。
+func taintRequestContext(c *gin.Context) context.Context {
+	if c == nil || c.Request == nil || c.Request.Context() == nil {
+		return context.Background()
+	}
+	return c.Request.Context()
 }
 
 // isOpenAICodexSessionTainted 返回该会话是否曾被多个账号服务过（净化模式）。
+// 与 noteOpenAICodexSessionAttempt 同一套存储策略：Redis 优先、内存降级。
 func (s *OpenAIGatewayService) isOpenAICodexSessionTainted(c *gin.Context) bool {
 	if s == nil {
 		return false
@@ -135,6 +162,14 @@ func (s *OpenAIGatewayService) isOpenAICodexSessionTainted(c *gin.Context) bool 
 	seed := openAICodexTurnStateSeed(c)
 	if seed == "" {
 		return false
+	}
+	if s.cache != nil {
+		switched, err := s.cache.IsCodexSessionTainted(taintRequestContext(c), seed)
+		if err == nil {
+			return switched
+		}
+		slog.Warn("codex session taint redis query failed, falling back to in-memory",
+			"error", err)
 	}
 	raw, ok := s.openaiCodexSessionTaints.Load(seed)
 	if !ok {
@@ -217,8 +252,8 @@ func (s *OpenAIGatewayService) TrackOpenAICodexSessionAttemptForTaint(c *gin.Con
 	if !s.CodexSessionSwitchPurificationEnabled(c.Request.Context()) {
 		return false
 	}
-	s.noteOpenAICodexSessionAttempt(c, account)
-	if (firstAttemptAccountID != 0 && firstAttemptAccountID != account.ID) || s.isOpenAICodexSessionTainted(c) {
+	switched := s.noteOpenAICodexSessionAttempt(c, account)
+	if (firstAttemptAccountID != 0 && firstAttemptAccountID != account.ID) || switched {
 		setOpenAICodexTaintSanitize(c, account.ID)
 		return true
 	}

@@ -165,6 +165,12 @@ type openAIWSStateStoreTimeoutProbeCache struct {
 	delDeadlineDelta  time.Duration
 }
 
+func (c *openAIWSStateStoreTimeoutProbeCache) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (c *openAIWSStateStoreTimeoutProbeCache) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
 func (c *openAIWSStateStoreTimeoutProbeCache) GetSessionAccountID(ctx context.Context, _ int64, _ string) (int64, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		c.getHasDeadline = true

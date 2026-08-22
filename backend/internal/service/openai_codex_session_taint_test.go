@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -436,4 +438,72 @@ func TestTrackOpenAICodexSessionAttemptForTaint(t *testing.T) {
 
 	// Nil-safety.
 	require.False(t, svc.TrackOpenAICodexSessionAttemptForTaint(nil, &Account{ID: 1}, 0))
+}
+
+// taintOnlyCache 是只实现切号溯源两个方法的 GatewayCache 测试桩：内嵌 nil
+// 接口使其余方法无需实现（切号路径不会调用），用于验证服务层的 Redis 优先
+// 分支与错误降级分支。
+type taintOnlyCache struct {
+	GatewayCache
+	switched   bool
+	noteErr    error
+	queryErr   error
+	noteCalls  int
+	queryCalls int
+}
+
+func (m *taintOnlyCache) NoteCodexSessionTaint(_ context.Context, _ string, _ int64, _ time.Duration) (bool, error) {
+	m.noteCalls++
+	if m.noteErr != nil {
+		return false, m.noteErr
+	}
+	return m.switched, nil
+}
+
+func (m *taintOnlyCache) IsCodexSessionTainted(_ context.Context, _ string) (bool, error) {
+	m.queryCalls++
+	if m.queryErr != nil {
+		return false, m.queryErr
+	}
+	return m.switched, nil
+}
+
+// TestOpenAICodexSessionTaint_RedisFirst 验证 cache 可用时的 Redis 优先路径：
+// 溯源结论来自 Redis 返回值，Track 据此激活净化；且不再触碰内存表。
+func TestOpenAICodexSessionTaint_RedisFirst(t *testing.T) {
+	fake := &taintOnlyCache{switched: true}
+	svc := &OpenAIGatewayService{cache: fake, settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+		SettingKeyCodexSessionSwitchPurificationEnabled: "true",
+	}}}}
+	c := newSessionTaintTestContext(t, 7, "sess-redis")
+
+	require.True(t, svc.noteOpenAICodexSessionAttempt(c, &Account{ID: 3}))
+	require.Equal(t, 1, fake.noteCalls)
+
+	// Track 链路：Redis 已判定切换 → 激活净化标记。
+	require.True(t, svc.TrackOpenAICodexSessionAttemptForTaint(c, &Account{ID: 3}, 3))
+	require.Equal(t, int64(3), openAICodexTaintSanitizeAccountID(c))
+
+	// Redis 判定未切换 → 不净化。
+	fake2 := &taintOnlyCache{switched: false}
+	svc2 := &OpenAIGatewayService{cache: fake2, settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+		SettingKeyCodexSessionSwitchPurificationEnabled: "true",
+	}}}}
+	c2 := newSessionTaintTestContext(t, 7, "sess-redis2")
+	require.False(t, svc2.TrackOpenAICodexSessionAttemptForTaint(c2, &Account{ID: 3}, 3))
+	require.Zero(t, openAICodexTaintSanitizeAccountID(c2))
+}
+
+// TestOpenAICodexSessionTaint_RedisErrorFallsBackToMemory 验证 Redis 故障时
+// 降级到进程内表：单实例语义不受影响。
+func TestOpenAICodexSessionTaint_RedisErrorFallsBackToMemory(t *testing.T) {
+	fake := &taintOnlyCache{noteErr: errors.New("redis unavailable"), queryErr: errors.New("redis unavailable")}
+	svc := &OpenAIGatewayService{cache: fake}
+	c := newSessionTaintTestContext(t, 7, "sess-fallback")
+
+	// 降级路径：note 走内存表（首账号 1，未切换）。
+	require.False(t, svc.noteOpenAICodexSessionAttempt(c, &Account{ID: 1}))
+	// 同一会话第二个账号 → 内存表置位。
+	require.True(t, svc.noteOpenAICodexSessionAttempt(c, &Account{ID: 2}))
+	require.True(t, svc.isOpenAICodexSessionTainted(c))
 }
